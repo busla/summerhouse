@@ -43,6 +43,9 @@ dev = [
     "pydantic-to-typescript>=1.0.10",
 ]
 
+[project.scripts]
+summerhouse-agent = "src.agent_app:app.run"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 

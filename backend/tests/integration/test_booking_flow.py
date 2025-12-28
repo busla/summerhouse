@@ -24,24 +24,50 @@ import pytest
 from moto import mock_aws
 
 # Set environment for tests before importing tools
+# Only set fake credentials if AWS_PROFILE is not set (to allow real AWS integration tests)
 os.environ.setdefault("AWS_DEFAULT_REGION", "eu-west-1")
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("ENVIRONMENT", "test")
+# NOTE: AWS credentials are set by the aws_credentials fixture, not here,
+# to avoid polluting the environment for other tests that need real credentials
 
 
 # === Fixtures ===
 
 
 @pytest.fixture
-def aws_credentials() -> None:
-    """Mocked AWS Credentials for moto."""
+def aws_credentials() -> Generator[None, None, None]:
+    """Mocked AWS Credentials for moto.
+
+    Sets fake credentials for moto to use, then restores original
+    credentials after the test completes.
+    """
+    # Save original values
+    original_values = {
+        key: os.environ.get(key)
+        for key in [
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SECURITY_TOKEN",
+            "AWS_SESSION_TOKEN",
+        ]
+    }
+
+    # Set fake credentials for moto
     os.environ["AWS_ACCESS_KEY_ID"] = "testing"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
     os.environ["AWS_SECURITY_TOKEN"] = "testing"
     os.environ["AWS_SESSION_TOKEN"] = "testing"
     os.environ["AWS_DEFAULT_REGION"] = "eu-west-1"
     os.environ["ENVIRONMENT"] = "test"
+
+    yield
+
+    # Restore original values
+    for key, value in original_values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @pytest.fixture
