@@ -110,20 +110,9 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="app-container">
-      {/* Header */}
-      <header className="border-b border-gray-200 bg-white">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <SunIcon className="text-yellow-500 w-8 h-8" />
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Summerhouse</h1>
-            <p className="text-xs text-gray-500">Vacation Rental Booking Assistant</p>
-          </div>
-        </div>
-      </header>
-
+    <div className="chat-page">
       {/* Chat Area */}
-      <main className="flex-1 flex flex-col max-w-4xl mx-auto w-full">
+      <div className="chat-container max-w-4xl mx-auto w-full">
         <Conversation className="flex-1 flex flex-col">
           <ConversationContent className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (
@@ -134,19 +123,19 @@ export default function ChatPage() {
               >
                 <div className="mt-4 flex flex-wrap gap-2 justify-center">
                   <SuggestionButton
-                    onClick={() => setInput('What dates are available?')}
+                    onClick={() => sendMessage({ text: 'What dates are available?' })}
                     label="Check availability"
                   />
                   <SuggestionButton
-                    onClick={() => setInput('How much does it cost to stay?')}
+                    onClick={() => sendMessage({ text: 'How much does it cost to stay?' })}
                     label="See pricing"
                   />
                   <SuggestionButton
-                    onClick={() => setInput('Tell me about the property')}
+                    onClick={() => sendMessage({ text: 'Tell me about the property' })}
                     label="Property details"
                   />
                   <SuggestionButton
-                    onClick={() => setInput("What's there to do nearby?")}
+                    onClick={() => sendMessage({ text: "What's there to do nearby?" })}
                     label="Local attractions"
                   />
                 </div>
@@ -208,7 +197,7 @@ export default function ChatPage() {
             Press Enter to send, Shift+Enter for new line
           </p>
         </div>
-      </main>
+      </div>
     </div>
   )
 }

@@ -95,17 +95,45 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* App Container */
-.app-container {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
-.app-container > main {
+/* App Container */
+.app-container {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Chat Page - fills remaining viewport after navigation */
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0; /* Critical for nested flex to work */
+  overflow: hidden;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-container .conversation {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-container .conversation-content {
+  flex: 1;
+  overflow-y: auto;
 }
 
 /* Typography */

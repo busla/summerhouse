@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { Navigation } from '@/components/layout/Navigation'
 
 export const metadata: Metadata = {
   title: 'Summerhouse - Vacation Rental in Quesada',
@@ -40,7 +41,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div className="app-container">{children}</div>
+        <Navigation />
+        <main className="app-container">{children}</main>
       </body>
     </html>
   )
