@@ -44,7 +44,7 @@ dev = [
 ]
 
 [project.scripts]
-summerhouse-agent = "src.agent_app:app.run"
+summerhouse-agent = "src.api_app:run_server"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
