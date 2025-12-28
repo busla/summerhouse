@@ -51,7 +51,7 @@
 - [X] T008 [P] [FOUND] Create infrastructure/variables.tf with environment, namespace, AWS region
 - [X] T009 [P] [FOUND] Create infrastructure/outputs.tf with cognito, agentcore, dynamodb, cloudfront outputs
 - [X] T010 [P] [FOUND] Create infrastructure/environments/dev.tfvars with backend config (profile=apro-sandbox, allowed_account_ids=["195275641848"])
-- [ ] T011 [P] [FOUND] Create infrastructure/environments/prod.tfvars with backend config (profile/account TBD)
+- [X] T011 [P] [FOUND] Create infrastructure/environments/prod.tfvars with backend config (profile/account TBD)
 
 ### 2B: DynamoDB Tables (per data-model.md)
 
@@ -204,19 +204,19 @@
 
 ### 5A: Tests for US3
 
-- [ ] T078 [P] [US3] Unit tests for get_area_info tool in backend/tests/unit/test_area_info.py
-- [ ] T079 [P] [US3] Unit tests for get_recommendations tool in backend/tests/unit/test_recommendations.py
+- [X] T078 [P] [US3] Unit tests for get_area_info tool in backend/tests/unit/test_area_info.py
+- [X] T079 [P] [US3] Unit tests for get_recommendations tool in backend/tests/unit/test_recommendations.py
 
 ### 5B: Area Info Tools (US3)
 
-- [ ] T080 [P] [US3] Implement get_area_info tool in backend/src/tools/area_info.py
-- [ ] T081 [P] [US3] Implement get_recommendations tool in backend/src/tools/area_info.py
-- [ ] T082 [US3] Register area info tools with booking_agent in backend/src/agent/booking_agent.py
+- [X] T080 [P] [US3] Implement get_area_info tool in backend/src/tools/area_info.py
+- [X] T081 [P] [US3] Implement get_recommendations tool in backend/src/tools/area_info.py
+- [X] T082 [US3] Register area info tools with booking_agent in backend/src/agent/booking_agent.py
 
 ### 5C: Area Data (US3)
 
-- [ ] T083 [US3] Create area info data structure (golf, beaches, restaurants, activities)
-- [ ] T084 [US3] Seed area info data (S3 or DynamoDB static content)
+- [X] T083 [US3] Create area info data structure (golf, beaches, restaurants, activities)
+- [X] T084 [US3] Seed area info data (S3 or DynamoDB static content)
 
 **Checkpoint**: US3 complete - guests can learn about the Quesada area
 
@@ -230,20 +230,20 @@
 
 ### 6A: Tests for US4
 
-- [ ] T085 [P] [US4] Unit tests for get_property_details tool in backend/tests/unit/test_property.py
-- [ ] T086 [P] [US4] Unit tests for get_photos tool in backend/tests/unit/test_photos.py
+- [X] T085 [P] [US4] Unit tests for get_property_details tool in backend/tests/unit/test_property.py
+- [X] T086 [P] [US4] Unit tests for get_photos tool in backend/tests/unit/test_photos.py
 
 ### 6B: Property Tools (US4)
 
-- [ ] T087 [P] [US4] Implement get_property_details tool in backend/src/tools/property.py
-- [ ] T088 [P] [US4] Implement get_photos tool (with category filter) in backend/src/tools/property.py
-- [ ] T089 [US4] Register property tools with booking_agent in backend/src/agent/booking_agent.py
+- [X] T087 [P] [US4] Implement get_property_details tool in backend/src/tools/property.py
+- [X] T088 [P] [US4] Implement get_photos tool (with category filter) in backend/src/tools/property.py
+- [X] T089 [US4] Register property tools with booking_agent in backend/src/agent/booking_agent.py
 
 ### 6C: Property Data & Photos (US4)
 
-- [ ] T090 [US4] Create property data structure (bedrooms, bathrooms, amenities, rules)
-- [ ] T091 [US4] Upload property photos to S3 bucket
-- [ ] T092 [P] [US4] Create PhotoGallery component in frontend/src/components/agent/PhotoGallery.tsx
+- [X] T090 [US4] Create property data structure (bedrooms, bathrooms, amenities, rules)
+- [ ] T091 [US4] Upload property photos to S3 bucket (requires actual photos - deployment task)
+- [X] T092 [P] [US4] Create PhotoGallery component in frontend/src/components/agent/PhotoGallery.tsx
 
 **Checkpoint**: US4 complete - guests can explore apartment details and photos
 
@@ -257,21 +257,21 @@
 
 ### 7A: Tests for US5
 
-- [ ] T093 [P] [US5] Unit tests for get_reservation tool in backend/tests/unit/test_get_reservation.py
-- [ ] T094 [P] [US5] Unit tests for modify_reservation tool in backend/tests/unit/test_modify_reservation.py
-- [ ] T095 [P] [US5] Unit tests for cancel_reservation tool in backend/tests/unit/test_cancel_reservation.py
+- [X] T093 [P] [US5] Unit tests for get_reservation tool in backend/tests/unit/test_get_reservation.py
+- [X] T094 [P] [US5] Unit tests for modify_reservation tool in backend/tests/unit/test_modify_reservation.py
+- [X] T095 [P] [US5] Unit tests for cancel_reservation tool in backend/tests/unit/test_cancel_reservation.py
 
 ### 7B: Booking Management Tools (US5)
 
-- [ ] T096 [US5] Implement get_reservation tool (session-bound guest_id) in backend/src/tools/reservations.py
-- [ ] T097 [US5] Implement modify_reservation tool with price recalculation in backend/src/tools/reservations.py
-- [ ] T098 [US5] Implement cancel_reservation tool with cancellation policy in backend/src/tools/reservations.py
-- [ ] T099 [US5] Implement resend_confirmation helper in backend/src/services/notification_service.py
+- [X] T096 [US5] Implement get_reservation tool (session-bound guest_id) in backend/src/tools/reservations.py
+- [X] T097 [US5] Implement modify_reservation tool with price recalculation in backend/src/tools/reservations.py
+- [X] T098 [US5] Implement cancel_reservation tool with cancellation policy in backend/src/tools/reservations.py
+- [ ] T099 [US5] Implement resend_confirmation helper in backend/src/services/notification_service.py (deferred - requires SES setup)
 
 ### 7C: Session-Bound Authorization (US5 - FR-039 to FR-042)
 
-- [ ] T100 [US5] Implement guest_id injection from Cognito session in backend/src/agent/booking_agent.py
-- [ ] T101 [US5] Add session-bound filtering to all guest data tools in backend/src/tools/
+- [ ] T100 [US5] Implement guest_id injection from Cognito session in backend/src/agent/booking_agent.py (requires Cognito setup)
+- [ ] T101 [US5] Add session-bound filtering to all guest data tools in backend/src/tools/ (requires Cognito setup)
 
 **Checkpoint**: US5 complete - guests can manage existing bookings
 
@@ -289,12 +289,12 @@
 
 ### 8B: Static Pages (US6)
 
-- [ ] T103 [P] [US6] Create Pricing page with rate table in frontend/src/app/pricing/page.tsx
-- [ ] T104 [P] [US6] Create Location page with interactive map in frontend/src/app/location/page.tsx
-- [ ] T105 [P] [US6] Create About page with photo gallery and amenities in frontend/src/app/about/page.tsx
-- [ ] T106 [P] [US6] Create Area Guide page in frontend/src/app/area-guide/page.tsx
-- [ ] T107 [P] [US6] Create FAQ page in frontend/src/app/faq/page.tsx
-- [ ] T108 [P] [US6] Create Contact page in frontend/src/app/contact/page.tsx
+- [X] T103 [P] [US6] Create Pricing page with rate table in frontend/src/app/pricing/page.tsx
+- [X] T104 [P] [US6] Create Location page with interactive map in frontend/src/app/location/page.tsx
+- [X] T105 [P] [US6] Create About page with photo gallery and amenities in frontend/src/app/about/page.tsx
+- [X] T106 [P] [US6] Create Area Guide page in frontend/src/app/area-guide/page.tsx
+- [X] T107 [P] [US6] Create FAQ page in frontend/src/app/faq/page.tsx
+- [X] T108 [P] [US6] Create Contact page in frontend/src/app/contact/page.tsx
 
 ### 8C: Persistent Agent Access (US6 - FR-037)
 

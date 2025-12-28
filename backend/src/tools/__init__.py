@@ -8,9 +8,11 @@ Tools are organized by category:
 - Payments: process_payment, get_payment_status, retry_payment
 - Guest: initiate_verification, verify_code, get_guest_info, update_guest_details
 - Area Info: get_area_info, get_recommendations
+- Property: get_property_details, get_photos
 """
 
 from src.tools.area_info import get_area_info, get_recommendations
+from src.tools.property import get_photos, get_property_details
 from src.tools.availability import check_availability, get_calendar
 from src.tools.guest import (
     get_guest_info,
@@ -26,7 +28,12 @@ from src.tools.pricing import (
     get_pricing,
     get_seasonal_rates,
 )
-from src.tools.reservations import create_reservation, get_reservation
+from src.tools.reservations import (
+    cancel_reservation,
+    create_reservation,
+    get_reservation,
+    modify_reservation,
+)
 
 # All tools for the booking agent
 ALL_TOOLS = [
@@ -42,6 +49,8 @@ ALL_TOOLS = [
     # Reservation tools
     create_reservation,
     get_reservation,
+    modify_reservation,
+    cancel_reservation,
     # Payment tools
     process_payment,
     get_payment_status,
@@ -54,6 +63,9 @@ ALL_TOOLS = [
     # Area info tools
     get_area_info,
     get_recommendations,
+    # Property tools
+    get_property_details,
+    get_photos,
 ]
 
 __all__ = [
@@ -67,6 +79,8 @@ __all__ = [
     "get_minimum_stay_info",
     "create_reservation",
     "get_reservation",
+    "modify_reservation",
+    "cancel_reservation",
     "process_payment",
     "get_payment_status",
     "retry_payment",
@@ -76,6 +90,8 @@ __all__ = [
     "update_guest_details",
     "get_area_info",
     "get_recommendations",
+    "get_property_details",
+    "get_photos",
     # Tool collection
     "ALL_TOOLS",
 ]

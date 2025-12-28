@@ -87,7 +87,7 @@ async function forwardToAgent(
   const authHeader = request.headers.get('Authorization')
 
   // Convert UI messages to model messages for the backend
-  const modelMessages = convertToModelMessages(messages)
+  const modelMessages = await convertToModelMessages(messages)
 
   // Create abort controller for timeout
   const controller = new AbortController()

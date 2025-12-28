@@ -30,6 +30,16 @@ from .area_info import (
     RecommendationRequest,
     RecommendationResponse,
 )
+from .property import (
+    Address,
+    Coordinates,
+    Photo,
+    PhotoCategory,
+    PhotosResponse,
+    Property,
+    PropertyDetailsResponse,
+    PropertySummary,
+)
 
 __all__ = [
     # Enums
@@ -70,4 +80,13 @@ __all__ = [
     "AreaInfoResponse",
     "RecommendationRequest",
     "RecommendationResponse",
+    # Property
+    "Address",
+    "Coordinates",
+    "Photo",
+    "PhotoCategory",
+    "PhotosResponse",
+    "Property",
+    "PropertyDetailsResponse",
+    "PropertySummary",
 ]

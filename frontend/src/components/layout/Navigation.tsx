@@ -30,9 +30,12 @@ export function Navigation({ links = [], activePath, onNavigate }: NavigationPro
 
   const defaultLinks: NavLink[] = [
     { label: 'Book Now', href: '/' },
-    { label: 'Property', href: '/property' },
-    { label: 'Area Guide', href: '/area' },
-    { label: 'My Booking', href: '/booking' },
+    { label: 'About', href: '/about' },
+    { label: 'Location', href: '/location' },
+    { label: 'Pricing', href: '/pricing' },
+    { label: 'Area Guide', href: '/area-guide' },
+    { label: 'FAQ', href: '/faq' },
+    { label: 'Contact', href: '/contact' },
   ]
 
   const navLinks = links.length > 0 ? links : defaultLinks

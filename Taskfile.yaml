@@ -7,77 +7,28 @@
 version: "3"
 
 vars:
-  AWS_REGION: us-east-1
   TF_DIR: infrastructure
 
 tasks:
   # ============================================================================
-  # Terraform Commands (tf:<action>:<env>)
+  # Terraform Commands
   # ============================================================================
+  # Usage: task tf:<action>:<env>
+  # Examples: task tf:init:dev, task tf:plan:prod, task tf:apply:dev
+  # Available actions: init, plan, apply, destroy, output
+  # Environments are auto-discovered from infrastructure/environments/
 
-  # DEV Environment
-  tf:init:dev:
-    desc: Initialize Terraform for dev environment
+  # Dispatcher task - routes tf:<action>:<env> to internal tasks
+  tf:*:*:
+    desc: "Terraform commands (usage: task tf:<action>:<env> -- [extra args])"
+    vars:
+      ACTION: "{{index .MATCH 0}}"
+      ENV: "{{index .MATCH 1}}"
     cmds:
-      - task: _tf:init
-        vars: { ENV: dev }
+      - task: _tf:{{.ACTION}}
+        vars: { ENV: "{{.ENV}}", EXTRA_ARGS: "{{.CLI_ARGS}}" }
 
-  tf:plan:dev:
-    desc: Plan Terraform changes for dev environment
-    cmds:
-      - task: _tf:plan
-        vars: { ENV: dev }
-
-  tf:apply:dev:
-    desc: Apply Terraform changes for dev environment
-    cmds:
-      - task: _tf:apply
-        vars: { ENV: dev }
-
-  tf:destroy:dev:
-    desc: Destroy Terraform resources for dev environment (use with caution)
-    cmds:
-      - task: _tf:destroy
-        vars: { ENV: dev }
-
-  tf:output:dev:
-    desc: Show Terraform outputs for dev environment
-    cmds:
-      - task: _tf:output
-        vars: { ENV: dev }
-
-  # PROD Environment
-  tf:init:prod:
-    desc: Initialize Terraform for prod environment
-    cmds:
-      - task: _tf:init
-        vars: { ENV: prod }
-
-  tf:plan:prod:
-    desc: Plan Terraform changes for prod environment
-    cmds:
-      - task: _tf:plan
-        vars: { ENV: prod }
-
-  tf:apply:prod:
-    desc: Apply Terraform changes for prod environment
-    cmds:
-      - task: _tf:apply
-        vars: { ENV: prod }
-
-  tf:destroy:prod:
-    desc: Destroy Terraform resources for prod environment (use with caution)
-    cmds:
-      - task: _tf:destroy
-        vars: { ENV: prod }
-
-  tf:output:prod:
-    desc: Show Terraform outputs for prod environment
-    cmds:
-      - task: _tf:output
-        vars: { ENV: prod }
-
-  # Common Terraform Tasks
+  # Common Terraform Tasks (no environment required)
   tf:fmt:
     desc: Format Terraform files
     dir: "{{.TF_DIR}}"
@@ -85,10 +36,19 @@ tasks:
       - terraform fmt -recursive
 
   tf:validate:
-    desc: Validate Terraform configuration
+    desc: Validate Terraform configuration (run after init)
     dir: "{{.TF_DIR}}"
     cmds:
       - terraform validate
+
+  tf:envs:
+    desc: List available environments
+    cmds:
+      - |
+        echo "Available environments:"
+        ls -1 {{.TF_DIR}}/environments/ | grep -v '^\.' | while read env; do
+          echo "  - $env"
+        done
 
   # ============================================================================
   # Backend Commands
@@ -105,7 +65,7 @@ tasks:
     desc: Run backend in development mode
     dir: backend
     cmds:
-      - source .venv/bin/activate && python -m uvicorn src.api:app --reload --port 3001
+      - source .venv/bin/activate && python -m uvicorn src.api_app:app --reload --port 3001
 
   backend:test:
     desc: Run backend tests
@@ -213,17 +173,13 @@ tasks:
   # Data Seeding
   # ============================================================================
 
-  seed:dev:
-    desc: Seed development database with test data
+  seed:*:
+    desc: "Seed database with test data (usage: task seed:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
     dir: backend
     cmds:
-      - source .venv/bin/activate && python scripts/seed_data.py --env dev
-
-  seed:prod:
-    desc: Seed production database (use with caution)
-    dir: backend
-    cmds:
-      - source .venv/bin/activate && python scripts/seed_data.py --env prod
+      - source .venv/bin/activate && python scripts/seed_data.py --env {{.ENV}}
 
   # ============================================================================
   # Internal Tasks (reusable templates)
@@ -234,45 +190,54 @@ tasks:
     dir: "{{.TF_DIR}}"
     env:
       TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
-      AWS_REGION: "{{.AWS_REGION}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
+      - sh: test -f environments/{{.ENV}}/backend.hcl
+        msg: "Missing environments/{{.ENV}}/backend.hcl"
     cmds:
-      - |
-        terraform init \
-          -backend-config=environments/{{.ENV}}-backend.config \
-          -reconfigure
+      - terraform init -backend-config=environments/{{.ENV}}/backend.hcl -reconfigure {{.EXTRA_ARGS}}
 
   _tf:plan:
     internal: true
     dir: "{{.TF_DIR}}"
     env:
       TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
-      AWS_REGION: "{{.AWS_REGION}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
     cmds:
-      - terraform plan -var-file=environments/{{.ENV}}.tfvars
+      - terraform plan -var-file=environments/{{.ENV}}/terraform.tfvars.json {{.EXTRA_ARGS}}
 
   _tf:apply:
     internal: true
     dir: "{{.TF_DIR}}"
     env:
       TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
-      AWS_REGION: "{{.AWS_REGION}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
     cmds:
-      - terraform apply -var-file=environments/{{.ENV}}.tfvars -auto-approve
+      - terraform apply -var-file=environments/{{.ENV}}/terraform.tfvars.json {{.EXTRA_ARGS}}
 
   _tf:destroy:
     internal: true
     dir: "{{.TF_DIR}}"
     env:
       TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
-      AWS_REGION: "{{.AWS_REGION}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
     cmds:
-      - terraform destroy -var-file=environments/{{.ENV}}.tfvars
+      - terraform destroy -var-file=environments/{{.ENV}}/terraform.tfvars.json {{.EXTRA_ARGS}}
 
   _tf:output:
     internal: true
     dir: "{{.TF_DIR}}"
     env:
       TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
-      AWS_REGION: "{{.AWS_REGION}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
     cmds:
-      - terraform output {{.CLI_ARGS}}
+      - terraform output {{.EXTRA_ARGS}}

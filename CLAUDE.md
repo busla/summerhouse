@@ -27,7 +27,7 @@ An AI agent-driven vacation rental booking platform where the conversational age
 - **Database**: AWS DynamoDB (6 tables)
 - **Auth**: AWS Cognito (passwordless email verification)
 - **Hosting**: S3 + CloudFront (frontend), AgentCore Runtime (backend)
-- **Region**: us-east-1
+- **Region**: Configured per environment in `terraform.tfvars.json`
 
 ## Critical Commands
 
@@ -40,6 +40,7 @@ task tf:plan:dev      # Plan changes
 task tf:apply:dev     # Apply changes
 task tf:destroy:dev   # Destroy (careful!)
 task tf:output:dev    # Show outputs
+task tf:envs          # List available environments
 
 # Backend
 task backend:install  # Install Python deps with uv
@@ -97,10 +98,12 @@ summerhouse/
 ├── infrastructure/
 │   ├── main.tf
 │   └── environments/
-│       ├── dev.tfvars
-│       ├── dev-backend.config
-│       ├── prod.tfvars
-│       └── prod-backend.config
+│       ├── dev/
+│       │   ├── backend.hcl
+│       │   └── terraform.tfvars.json
+│       └── prod/
+│           ├── backend.hcl
+│           └── terraform.tfvars.json
 └── specs/
     └── 001-agent-booking-platform/
         ├── spec.md

@@ -1,0 +1,158 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-01-01",
+  "property": {
+    "property_id": "summerhouse-quesada",
+    "name": "Summerhouse Quesada",
+    "description": "Welcome to Summerhouse Quesada, a beautiful 2-bedroom vacation apartment located in the heart of Ciudad Quesada on the Costa Blanca, Spain. This bright and spacious apartment offers the perfect base for your Spanish getaway, whether you're here for golf, beach, or simply to enjoy the Mediterranean lifestyle.\n\nThe apartment features a comfortable living room, fully equipped kitchen, two bedrooms (one with double bed, one with twin beds), and a modern bathroom. The private terrace is perfect for morning coffee or evening drinks, overlooking the community gardens.\n\nLocated just minutes from multiple championship golf courses and a short drive to beautiful sandy beaches, Summerhouse Quesada offers the best of both worlds. The nearby town center has excellent restaurants, shops, and a popular weekly market.",
+    "address": {
+      "street": "Calle del Sol 45",
+      "city": "Ciudad Quesada",
+      "region": "Alicante",
+      "country": "Spain",
+      "postal_code": "03170"
+    },
+    "coordinates": {
+      "latitude": 38.0731,
+      "longitude": -0.7835
+    },
+    "bedrooms": 2,
+    "bathrooms": 1,
+    "max_guests": 4,
+    "amenities": [
+      "Free WiFi",
+      "Air Conditioning",
+      "Heating",
+      "Private Parking",
+      "Community Pool",
+      "Fully Equipped Kitchen",
+      "Dishwasher",
+      "Washing Machine",
+      "Iron & Ironing Board",
+      "Flat Screen TV",
+      "Satellite Channels",
+      "Private Terrace",
+      "Sun Loungers",
+      "BBQ (shared)",
+      "Bed Linens",
+      "Towels",
+      "Hairdryer",
+      "First Aid Kit",
+      "Fire Extinguisher",
+      "Smoke Detector"
+    ],
+    "photos": [
+      {
+        "id": "exterior-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/exterior-front.jpg",
+        "caption": "Front view of the apartment building with community gardens",
+        "category": "exterior",
+        "display_order": 1
+      },
+      {
+        "id": "living-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/living-room-main.jpg",
+        "caption": "Spacious living room with comfortable seating",
+        "category": "living_room",
+        "display_order": 2
+      },
+      {
+        "id": "living-2",
+        "url": "https://cdn.summerhouse-quesada.com/photos/living-room-dining.jpg",
+        "caption": "Living area with dining table",
+        "category": "living_room",
+        "display_order": 3
+      },
+      {
+        "id": "kitchen-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/kitchen-full.jpg",
+        "caption": "Fully equipped kitchen with modern appliances",
+        "category": "kitchen",
+        "display_order": 4
+      },
+      {
+        "id": "bedroom-master-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/bedroom-master.jpg",
+        "caption": "Master bedroom with comfortable double bed",
+        "category": "bedroom",
+        "display_order": 5
+      },
+      {
+        "id": "bedroom-twin-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/bedroom-twin.jpg",
+        "caption": "Second bedroom with twin beds",
+        "category": "bedroom",
+        "display_order": 6
+      },
+      {
+        "id": "bathroom-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/bathroom-main.jpg",
+        "caption": "Modern bathroom with shower",
+        "category": "bathroom",
+        "display_order": 7
+      },
+      {
+        "id": "terrace-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/terrace-view.jpg",
+        "caption": "Private terrace overlooking the gardens",
+        "category": "terrace",
+        "display_order": 8
+      },
+      {
+        "id": "terrace-2",
+        "url": "https://cdn.summerhouse-quesada.com/photos/terrace-seating.jpg",
+        "caption": "Terrace seating area perfect for al fresco dining",
+        "category": "terrace",
+        "display_order": 9
+      },
+      {
+        "id": "pool-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/pool-overview.jpg",
+        "caption": "Community swimming pool",
+        "category": "pool",
+        "display_order": 10
+      },
+      {
+        "id": "pool-2",
+        "url": "https://cdn.summerhouse-quesada.com/photos/pool-loungers.jpg",
+        "caption": "Pool area with sun loungers",
+        "category": "pool",
+        "display_order": 11
+      },
+      {
+        "id": "garden-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/garden-palm.jpg",
+        "caption": "Beautifully maintained community gardens with palm trees",
+        "category": "garden",
+        "display_order": 12
+      },
+      {
+        "id": "view-1",
+        "url": "https://cdn.summerhouse-quesada.com/photos/view-sunset.jpg",
+        "caption": "Beautiful sunset views from the terrace",
+        "category": "view",
+        "display_order": 13
+      }
+    ],
+    "check_in_time": "15:00",
+    "check_out_time": "10:00",
+    "house_rules": [
+      "No smoking inside the apartment",
+      "No pets allowed",
+      "No parties or events",
+      "Quiet hours after 22:00",
+      "Maximum 4 guests",
+      "Please respect the neighbors",
+      "Keep the property clean and tidy",
+      "Report any damages immediately"
+    ],
+    "highlights": [
+      "5 minutes to La Marquesa Golf Course",
+      "15 minutes to beautiful sandy beaches",
+      "Walking distance to shops and restaurants",
+      "Community pool with sun terrace",
+      "Private parking included",
+      "Fast WiFi throughout"
+    ]
+  }
+}

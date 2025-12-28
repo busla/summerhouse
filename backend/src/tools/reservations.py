@@ -261,6 +261,336 @@ def _serialize_dynamodb(value: Any) -> dict[str, Any]:
 
 
 @tool
+def modify_reservation(
+    reservation_id: str,
+    new_check_in: str | None = None,
+    new_check_out: str | None = None,
+    new_num_adults: int | None = None,
+    new_num_children: int | None = None,
+    new_special_requests: str | None = None,
+) -> dict[str, Any]:
+    """Modify an existing reservation.
+
+    Use this tool when a guest wants to change their booking dates or
+    number of guests. Price will be recalculated for date changes.
+
+    IMPORTANT: Only modify reservations that are pending or confirmed.
+    Cannot modify cancelled or completed reservations.
+
+    Args:
+        reservation_id: The reservation ID (e.g., 'RES-2025-ABCD1234')
+        new_check_in: New check-in date in YYYY-MM-DD format (optional)
+        new_check_out: New check-out date in YYYY-MM-DD format (optional)
+        new_num_adults: New number of adults (optional)
+        new_num_children: New number of children (optional)
+        new_special_requests: Updated special requests (optional)
+
+    Returns:
+        Dictionary with updated reservation details or error message
+    """
+    db = _get_db()
+
+    # Get existing reservation
+    item = db.get_item("reservations", {"reservation_id": reservation_id})
+
+    if not item:
+        return {
+            "status": "error",
+            "code": "NOT_FOUND",
+            "message": f"Reservation {reservation_id} not found. Please check the ID and try again.",
+        }
+
+    # Check if reservation can be modified
+    current_status = item.get("status")
+    if current_status in [ReservationStatus.CANCELLED.value, ReservationStatus.COMPLETED.value]:
+        return {
+            "status": "error",
+            "code": "CANNOT_MODIFY",
+            "message": f"Cannot modify a {current_status} reservation.",
+        }
+
+    # Parse dates
+    current_check_in = _parse_date(item["check_in"])
+    current_check_out = _parse_date(item["check_out"])
+
+    # Determine new dates
+    try:
+        check_in = _parse_date(new_check_in) if new_check_in else current_check_in
+        check_out = _parse_date(new_check_out) if new_check_out else current_check_out
+    except ValueError:
+        return {
+            "status": "error",
+            "message": "Invalid date format. Please use YYYY-MM-DD format.",
+        }
+
+    if check_out <= check_in:
+        return {
+            "status": "error",
+            "message": "Check-out date must be after check-in date.",
+        }
+
+    # Determine new guest counts
+    num_adults = new_num_adults if new_num_adults is not None else item["num_adults"]
+    num_children = new_num_children if new_num_children is not None else item.get("num_children", 0)
+
+    if num_adults < 1:
+        return {
+            "status": "error",
+            "message": "At least 1 adult guest is required.",
+        }
+
+    total_guests = num_adults + num_children
+    max_guests = 6
+    if total_guests > max_guests:
+        return {
+            "status": "error",
+            "message": f"Maximum {max_guests} guests allowed. You requested {total_guests}.",
+        }
+
+    # Check if dates are changing
+    dates_changing = (check_in != current_check_in or check_out != current_check_out)
+
+    if dates_changing:
+        # Get dates to check (excluding current booking's dates)
+        current_dates = set(_date_range(current_check_in, current_check_out))
+        new_dates = set(_date_range(check_in, check_out))
+
+        # Only need to check dates that are new (not already booked by this reservation)
+        dates_to_check = list(new_dates - current_dates)
+
+        if dates_to_check:
+            is_available, unavailable_dates = _check_dates_available(db, dates_to_check)
+            if not is_available:
+                return {
+                    "status": "error",
+                    "code": "DATES_UNAVAILABLE",
+                    "unavailable_dates": unavailable_dates,
+                    "message": f"These dates are not available: {', '.join(unavailable_dates)}. Please try different dates.",
+                }
+
+    # Recalculate pricing if dates changed
+    nights = (check_out - check_in).days
+    nightly_rate, cleaning_fee = _get_pricing_for_dates(check_in, check_out)
+    new_total = (nightly_rate * nights) + cleaning_fee
+    old_total = int(item["total_amount"])
+    price_difference = new_total - old_total
+
+    # Build update
+    now = datetime.now(timezone.utc)
+    updates = {
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "nights": nights,
+        "num_adults": num_adults,
+        "num_children": num_children,
+        "total_amount": new_total,
+        "nightly_rate": nightly_rate,
+        "updated_at": now.isoformat(),
+    }
+
+    if new_special_requests is not None:
+        updates["special_requests"] = new_special_requests
+
+    # Update reservation
+    db.update_item("reservations", {"reservation_id": reservation_id}, updates)
+
+    # If dates changed, update availability
+    if dates_changing:
+        # Release old dates that are no longer needed
+        dates_to_release = list(current_dates - new_dates)
+        for d in dates_to_release:
+            db.update_item(
+                "availability",
+                {"date": d.isoformat()},
+                {
+                    "status": AvailabilityStatus.AVAILABLE.value,
+                    "reservation_id": None,
+                    "updated_at": now.isoformat(),
+                },
+            )
+
+        # Book new dates
+        dates_to_book = list(new_dates - current_dates)
+        for d in dates_to_book:
+            db.put_item(
+                "availability",
+                {
+                    "date": d.isoformat(),
+                    "status": AvailabilityStatus.BOOKED.value,
+                    "reservation_id": reservation_id,
+                    "updated_at": now.isoformat(),
+                },
+            )
+
+    # Build response
+    result = {
+        "status": "success",
+        "reservation_id": reservation_id,
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "nights": nights,
+        "num_adults": num_adults,
+        "num_children": num_children,
+        "new_total_cents": new_total,
+        "new_total_eur": new_total / 100,
+        "old_total_cents": old_total,
+        "price_difference_cents": price_difference,
+        "price_difference_eur": price_difference / 100,
+        "message": f"Reservation {reservation_id} has been updated. New total: €{new_total / 100:.2f}",
+    }
+
+    if price_difference > 0:
+        result["message"] += f" (additional €{price_difference / 100:.2f} due)"
+    elif price_difference < 0:
+        result["message"] += f" (€{abs(price_difference) / 100:.2f} refund due)"
+
+    return result
+
+
+@tool
+def cancel_reservation(
+    reservation_id: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Cancel an existing reservation.
+
+    Use this tool when a guest wants to cancel their booking.
+    Refund amount depends on how far in advance the cancellation is made:
+    - 30+ days before: 100% refund
+    - 14-29 days before: 50% refund
+    - Less than 14 days: No refund
+
+    IMPORTANT: Cannot cancel already cancelled or completed reservations.
+
+    Args:
+        reservation_id: The reservation ID (e.g., 'RES-2025-ABCD1234')
+        reason: Optional reason for cancellation
+
+    Returns:
+        Dictionary with cancellation details and refund information
+    """
+    db = _get_db()
+
+    # Get existing reservation
+    item = db.get_item("reservations", {"reservation_id": reservation_id})
+
+    if not item:
+        return {
+            "status": "error",
+            "code": "NOT_FOUND",
+            "message": f"Reservation {reservation_id} not found. Please check the ID and try again.",
+        }
+
+    # Check if reservation can be cancelled
+    current_status = item.get("status")
+    if current_status == ReservationStatus.CANCELLED.value:
+        return {
+            "status": "error",
+            "code": "ALREADY_CANCELLED",
+            "message": "This reservation has already been cancelled.",
+        }
+
+    if current_status == ReservationStatus.COMPLETED.value:
+        return {
+            "status": "error",
+            "code": "CANNOT_CANCEL",
+            "message": "Cannot cancel a completed reservation.",
+        }
+
+    # Parse check-in date and calculate days until arrival
+    check_in = _parse_date(item["check_in"])
+    check_out = _parse_date(item["check_out"])
+    today = date.today()
+    days_until_checkin = (check_in - today).days
+
+    # Check if reservation is in the past
+    if check_in <= today:
+        return {
+            "status": "error",
+            "code": "CANNOT_CANCEL",
+            "message": "Cannot cancel a reservation that has already started or completed.",
+        }
+
+    # Calculate refund based on cancellation policy
+    total_amount = int(item["total_amount"])
+
+    if days_until_checkin >= 30:
+        refund_percentage = 100
+        refund_amount = total_amount
+    elif days_until_checkin >= 14:
+        refund_percentage = 50
+        refund_amount = total_amount // 2
+    else:
+        refund_percentage = 0
+        refund_amount = 0
+
+    # Prepare transaction items
+    now = datetime.now(timezone.utc)
+    transact_items: list[dict[str, Any]] = []
+
+    # Update reservation status
+    transact_items.append(
+        {
+            "Update": {
+                "TableName": db._table_name("reservations"),
+                "Key": {"reservation_id": {"S": reservation_id}},
+                "UpdateExpression": "SET #s = :cancelled, payment_status = :refund_status, cancellation_reason = :reason, cancelled_at = :now, refund_amount = :refund, updated_at = :now",
+                "ExpressionAttributeNames": {"#s": "status"},
+                "ExpressionAttributeValues": {
+                    ":cancelled": {"S": ReservationStatus.CANCELLED.value},
+                    ":refund_status": {"S": PaymentStatus.REFUNDED.value if refund_amount > 0 else PaymentStatus.CANCELLED.value},
+                    ":reason": {"S": reason or "No reason provided"},
+                    ":now": {"S": now.isoformat()},
+                    ":refund": {"N": str(refund_amount)},
+                },
+            }
+        }
+    )
+
+    # Release all booked dates
+    dates_to_release = _date_range(check_in, check_out)
+    for d in dates_to_release:
+        transact_items.append(
+            {
+                "Put": {
+                    "TableName": db._table_name("availability"),
+                    "Item": {
+                        "date": {"S": d.isoformat()},
+                        "status": {"S": AvailabilityStatus.AVAILABLE.value},
+                        "updated_at": {"S": now.isoformat()},
+                    },
+                }
+            }
+        )
+
+    # Execute transaction
+    success = db.transact_write(transact_items)
+
+    if not success:
+        return {
+            "status": "error",
+            "code": "CANCELLATION_FAILED",
+            "message": "Failed to cancel reservation. Please try again.",
+        }
+
+    return {
+        "status": "success",
+        "reservation_id": reservation_id,
+        "check_in": item["check_in"],
+        "check_out": item["check_out"],
+        "days_until_checkin": days_until_checkin,
+        "refund_percentage": refund_percentage,
+        "refund_amount_cents": refund_amount,
+        "refund_amount_eur": refund_amount / 100,
+        "original_amount_cents": total_amount,
+        "original_amount_eur": total_amount / 100,
+        "cancellation_reason": reason or "No reason provided",
+        "cancelled_at": now.isoformat(),
+        "message": f"Reservation {reservation_id} has been cancelled. Refund: €{refund_amount / 100:.2f} ({refund_percentage}% of €{total_amount / 100:.2f}).",
+    }
+
+
+@tool
 def get_reservation(reservation_id: str) -> dict[str, Any]:
     """Get details of an existing reservation.
 
