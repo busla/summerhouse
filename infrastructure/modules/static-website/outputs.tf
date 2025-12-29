@@ -44,3 +44,22 @@ output "deploy_command" {
   description = "Command to deploy frontend to S3"
   value       = "aws s3 sync frontend/out/ s3://${module.s3_bucket.s3_bucket_id}/ --delete && aws cloudfront create-invalidation --distribution-id ${module.cloudfront.cloudfront_distribution_id} --paths '/*'"
 }
+
+# -----------------------------------------------------------------------------
+# WAF Outputs
+# -----------------------------------------------------------------------------
+
+output "waf_web_acl_id" {
+  description = "WAF Web ACL ID (null if WAF disabled)"
+  value       = var.enable_waf ? module.waf[0].id : null
+}
+
+output "waf_web_acl_arn" {
+  description = "WAF Web ACL ARN (null if WAF disabled)"
+  value       = var.enable_waf ? module.waf[0].arn : null
+}
+
+output "waf_ip_set_arn" {
+  description = "WAF IP Set ARN containing whitelisted IPs (null if WAF disabled)"
+  value       = var.enable_waf ? aws_wafv2_ip_set.allowlist[0].arn : null
+}

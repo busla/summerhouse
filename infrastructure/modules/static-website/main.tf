@@ -14,8 +14,9 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0"
+      source                = "hashicorp/aws"
+      version               = ">= 5.0"
+      configuration_aliases = [aws.us_east_1]
     }
   }
 }
@@ -114,6 +115,9 @@ module "cloudfront" {
   price_class         = var.price_class
   default_root_object = var.index_document
 
+  # Don't wait for distribution deployment - speeds up terraform apply
+  wait_for_deployment = false
+
   # Origin Access Control for S3
   origin_access_control = {
     s3_oac = {
@@ -172,18 +176,21 @@ module "cloudfront" {
     }
   ]
 
-  # SPA routing: Return index.html for 404s and 403s (client-side routing)
+  # Error pages: Serve proper error pages with correct status codes
+  # Note: With Next.js static export + trailingSlash, all routes are physical files
+  # so we don't need SPA-style 404 → index.html fallback.
+  # S3 with OAC returns 403 for both missing files AND WAF blocks.
   custom_error_response = [
     {
-      error_code            = 404
-      response_code         = 200
-      response_page_path    = "/${var.index_document}"
+      error_code            = 403
+      response_code         = 403
+      response_page_path    = "/403.html"
       error_caching_min_ttl = 10
     },
     {
-      error_code            = 403
-      response_code         = 200
-      response_page_path    = "/${var.index_document}"
+      error_code            = 404
+      response_code         = 404
+      response_page_path    = "/404.html"
       error_caching_min_ttl = 10
     }
   ]
@@ -205,6 +212,9 @@ module "cloudfront" {
     cloudfront_default_certificate = true
     minimum_protocol_version       = "TLSv1"
   }
+
+  # WAF Web ACL attachment (if enabled)
+  web_acl_id = var.enable_waf ? module.waf[0].arn : null
 
   tags = module.label.tags
 }

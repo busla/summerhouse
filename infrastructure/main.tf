@@ -325,6 +325,11 @@ resource "aws_iam_role_policy_attachment" "identity_pool_auth_agentcore" {
 module "static_website" {
   source = "./modules/static-website"
 
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
   # Pass CloudPosse context
   context = module.label.context
 
@@ -332,4 +337,9 @@ module "static_website" {
   certificate_arn    = local.certificate_arn
   hosted_zone_id     = local.hosted_zone_id
   frontend_build_dir = "${path.module}/../frontend/out"
+
+  enable_waf = true
+  waf_whitelisted_ips = [
+    { ip = "157.157.199.250/32", description = "Hlíð" }
+  ]
 }

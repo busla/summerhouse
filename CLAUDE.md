@@ -392,3 +392,10 @@ This project follows the Booking Constitution (v1.1.0):
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+## Active Technologies
+- HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0 (002-static-website-waf)
+- N/A (Infrastructure as Code module) (002-static-website-waf)
+
+## Recent Changes
+- 002-static-website-waf: Added HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0

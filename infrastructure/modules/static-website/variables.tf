@@ -87,3 +87,41 @@ variable "create_route53_records" {
   type        = bool
   default     = true
 }
+
+# -----------------------------------------------------------------------------
+# WAF Variables
+# -----------------------------------------------------------------------------
+
+variable "enable_waf" {
+  description = "Enable WAF protection for CloudFront distribution"
+  type        = bool
+  default     = true
+}
+
+variable "waf_whitelisted_ips" {
+  description = "List of IP addresses to whitelist. Each entry requires IP in CIDR notation and a description for documentation clarity."
+  type = list(object({
+    ip          = string
+    description = string
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([
+      for entry in var.waf_whitelisted_ips :
+      can(cidrhost(entry.ip, 0))
+    ])
+    error_message = "All IP addresses must be in valid CIDR notation (e.g., 192.168.1.1/32 or 2001:db8::/32)."
+  }
+}
+
+variable "waf_managed_rules" {
+  description = "List of AWS Managed Rule Groups to include. Empty by default (IP allowlist is primary protection)."
+  type = list(object({
+    name           = string
+    vendor_name    = string
+    priority       = number
+    excluded_rules = optional(list(string), [])
+  }))
+  default = []
+}
