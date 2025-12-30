@@ -17,6 +17,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { invokeAgentCore, type AgentResponse } from '@/lib/sigv4-fetch'
+import { isTokenDeliveryEvent, sessionFromTokenEvent, storeSession } from '@/lib/auth'
 
 // === Types ===
 
@@ -159,6 +160,22 @@ export function useAgentChat(options: UseAgentChatOptions = {}): UseAgentChatRet
         // Store session ID for conversation continuity
         if (response.sessionId) {
           sessionIdRef.current = response.sessionId
+        }
+
+        // T025: Check tool results for TokenDeliveryEvent and store session
+        if (response.toolResults) {
+          for (const result of response.toolResults) {
+            if (isTokenDeliveryEvent(result)) {
+              const session = sessionFromTokenEvent(result)
+              storeSession(session)
+              // T026: Log token delivery (without exposing token values)
+              console.log('[Auth] Session stored after token delivery', {
+                guestId: session.guestId,
+                email: session.email,
+                expiresAt: session.expiresAt,
+              })
+            }
+          }
         }
 
         // Finalize the assistant message with complete text

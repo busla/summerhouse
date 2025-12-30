@@ -67,9 +67,11 @@ out/
 
 # Terraform
 infrastructure/.terraform*/
+infrastructure/builds/
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.plan.json
 .terraform.lock.hcl
 
 # Logs

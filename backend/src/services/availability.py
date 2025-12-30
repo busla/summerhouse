@@ -64,18 +64,22 @@ class AvailabilityService:
         # Create map for quick lookup
         item_map = {item["date"]: item for item in items}
 
+        today = dt.date.today()
         result = []
         for d in dates:
             date_str = d.isoformat()
             if date_str in item_map:
                 result.append(self._item_to_availability(item_map[date_str]))
             else:
-                # Date not in DB means it's available (pre-populated dates)
-                # For missing dates, treat as available
+                # Date not in DB - treat as UNAVAILABLE (not bookable)
+                # This handles: past dates, dates beyond seed range, or any gap
+                # Past dates are definitely not bookable
+                # Future dates without records haven't been seeded yet
                 result.append(
                     Availability(
                         date=d,
-                        status=AvailabilityStatus.AVAILABLE,
+                        status=AvailabilityStatus.BLOCKED,
+                        block_reason="past_date" if d < today else "not_configured",
                         updated_at=dt.datetime.now(dt.UTC),
                     )
                 )
@@ -276,6 +280,9 @@ class AvailabilityService:
         Searches before and after the requested period to find available
         windows that match the requested stay duration.
 
+        IMPORTANT: Only suggests dates that are VERIFIED available in DynamoDB.
+        Dates not in DynamoDB (past dates, beyond seed range) are treated as unavailable.
+
         Args:
             requested_start: Originally requested check-in date
             requested_end: Originally requested check-out date
@@ -302,18 +309,24 @@ class AvailabilityService:
         keys = [{"date": d.isoformat()} for d in all_dates]
         items = self.db.batch_get(self.TABLE, keys)
 
-        # Build lookup of unavailable dates
-        unavailable_dates: set[dt.date] = set()
+        # Build lookup of AVAILABLE dates (only dates that exist AND are available)
+        # Dates not in DynamoDB are NOT considered available (past dates, beyond seed range)
+        available_dates: set[dt.date] = set()
         for item in items:
-            if item.get("status") != AvailabilityStatus.AVAILABLE.value:
-                unavailable_dates.add(dt.date.fromisoformat(item["date"]))
+            if item.get("status") == AvailabilityStatus.AVAILABLE.value:
+                available_dates.add(dt.date.fromisoformat(item["date"]))
 
         # Find consecutive available windows
         def is_window_available(start: dt.date, nights: int) -> bool:
-            """Check if all dates in window are available."""
+            """Check if all dates in window are VERIFIED available.
+
+            A date is only available if it EXISTS in DynamoDB with AVAILABLE status.
+            Missing dates are NOT available (past dates, beyond seed range, gaps).
+            """
             for i in range(nights):
                 check_date = start + dt.timedelta(days=i)
-                if check_date in unavailable_dates:
+                # Date must be in available_dates set (exists AND is available)
+                if check_date not in available_dates:
                     return False
             return True
 

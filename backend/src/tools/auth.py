@@ -1,12 +1,14 @@
-"""Authentication tools for Strands booking agent (T036, T065).
+"""Authentication tools for Strands booking agent.
 
 This module provides agent tools for Cognito EMAIL_OTP passwordless authentication:
 - initiate_cognito_login: Start EMAIL_OTP passwordless flow
 - verify_cognito_otp: Complete OTP verification and bind guest
-- get_authenticated_guest: Get authenticated guest profile (OAuth2 3LO flow)
 
 Tools are stateless - auth state (session_token, otp_sent_at, attempts) must be
 passed as parameters between tool calls.
+
+Note: OAuth2 3LO flow (@requires_access_token) removed per spec clarification #3.
+Agent-initiated EMAIL_OTP is incompatible with user-initiated OAuth2 3LO.
 """
 
 import logging
@@ -15,14 +17,11 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-import jwt
 from botocore.exceptions import ClientError
 from strands import tool
 
 logger = logging.getLogger(__name__)
 logger.info("[AUTH MODULE] Loading auth tools module...")
-
-from bedrock_agentcore.identity import requires_access_token
 
 from src.models.auth import CognitoAuthChallenge, CognitoAuthState
 from src.models.errors import ErrorCode
@@ -59,7 +58,7 @@ def _is_valid_email(email: str) -> bool:
 def initiate_cognito_login(email: str) -> dict[str, Any]:
     """Initiate passwordless login with Cognito EMAIL_OTP challenge.
 
-    Triggers Cognito to send a 6-digit OTP code to the user's email.
+    Triggers Cognito to send an 8-digit OTP code to the user's email.
     Returns session_token needed for verify_cognito_otp.
 
     Args:
@@ -112,7 +111,7 @@ def initiate_cognito_login(email: str) -> dict[str, Any]:
         logger.error(f"[AUTH] Cognito ClientError: {error_code} - {error_msg}")
         return {
             "success": False,
-            "error_code": ErrorCode.EMAIL_DELIVERY_FAILED.value,
+            "error_code": "ERR_EMAIL_DELIVERY_FAILED",  # Contract-defined code
             "message": f"Cognito error: {error_code} - {error_msg}",
         }
 
@@ -141,7 +140,7 @@ def verify_cognito_otp(
 
     Args:
         email: User's email address
-        otp_code: 6-digit OTP code entered by user
+        otp_code: 8-digit OTP code entered by user
         session_token: Session token from initiate_cognito_login
         otp_sent_at: ISO timestamp when OTP was sent (for expiry check)
         attempts: Number of previous failed attempts (default 0)
@@ -158,6 +157,16 @@ def verify_cognito_otp(
         - error_code: INVALID_OTP, OTP_EXPIRED, or MAX_ATTEMPTS_EXCEEDED
         - message: Human-readable error message
     """
+    # Validate OTP format (Cognito EMAIL_OTP sends 8-digit codes)
+    clean_otp = otp_code.strip()
+    if not clean_otp.isdigit() or len(clean_otp) != 8:
+        return {
+            "success": False,
+            "error_code": "INVALID_OTP_FORMAT",
+            "message": f"Please enter the 8-digit code from your email. You entered {len(clean_otp)} characters.",
+            "attempts": attempts,
+        }
+
     # Parse otp_sent_at timestamp
     try:
         otp_sent_datetime = datetime.fromisoformat(otp_sent_at)
@@ -174,7 +183,7 @@ def verify_cognito_otp(
     )
 
     auth_service = _get_auth_service()
-    result, updated_state = auth_service.verify_otp_with_state(auth_state, otp_code)
+    result, updated_state = auth_service.verify_otp_with_state(auth_state, clean_otp)
 
     if not result.success:
         return {
@@ -188,11 +197,17 @@ def verify_cognito_otp(
     try:
         guest = auth_service.get_or_create_guest(email, result.cognito_sub or "")
 
+        # Return TokenDeliveryEvent format per contracts/tool-responses.md (T022)
         return {
+            "event_type": "auth_tokens",
             "success": True,
+            "id_token": result.id_token,
+            "access_token": result.access_token,
+            "refresh_token": result.refresh_token,
+            "expires_in": result.expires_in or 3600,
             "guest_id": guest.guest_id,
-            "cognito_sub": guest.cognito_sub,
             "email": email,
+            "cognito_sub": guest.cognito_sub,
         }
 
     except Exception as e:
@@ -204,121 +219,15 @@ def verify_cognito_otp(
 
 
 # ---------------------------------------------------------------------------
-# T065: OAuth2 3LO Flow with @requires_access_token decorator
+# OAuth2 3LO code removed per spec clarification #3 (T006)
 # ---------------------------------------------------------------------------
-
-
-def stream_auth_url_to_client(auth_url: str) -> None:
-    """Callback function for @requires_access_token decorator.
-
-    Called when the user needs to authenticate via OAuth2.
-    The auth_url is streamed to the guest via the agent chat interface.
-
-    The URL will be rendered as a clickable hyperlink within the chat
-    message bubble, allowing the guest to authenticate via Cognito.
-
-    Args:
-        auth_url: Full authorization URL for Cognito OAuth2 login
-    """
-    # The Strands agent framework handles streaming this to the chat.
-    # The decorator calls this function, and Strands will render the URL
-    # as a clickable link in the conversation.
-    # No implementation needed here - the decorator uses the callback
-    # to know where to send the auth URL.
-    pass
-
-
-# OAuth2 callback URL is configured via environment variable
-# This is the URL AgentCore will redirect to after OAuth2 completes
-OAUTH2_CALLBACK_URL = os.getenv("OAUTH2_CALLBACK_URL", "")
-
-# Identity provider name configured in AgentCore
-IDENTITY_PROVIDER_NAME = os.getenv(
-    "AGENTCORE_IDENTITY_PROVIDER_NAME", "CognitoIdentityProvider"
-)
-
-
-@tool
-@requires_access_token(
-    provider_name=IDENTITY_PROVIDER_NAME,
-    scopes=["openid", "email"],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=stream_auth_url_to_client,
-    callback_url=OAUTH2_CALLBACK_URL,
-)
-def get_authenticated_guest(*, access_token: str) -> dict[str, Any]:
-    """Get the authenticated guest's profile using OAuth2 3LO flow.
-
-    If the guest is not authenticated, the @requires_access_token decorator
-    automatically triggers the OAuth2 flow:
-    1. Generates authorization URL with PKCE
-    2. Calls stream_auth_url_to_client to display link to guest
-    3. Guest completes Cognito login
-    4. OAuth2 callback processes the response
-    5. Decorator injects access_token into this function
-
-    The access_token parameter is automatically injected by the decorator
-    after successful OAuth2 authentication.
-
-    Returns:
-        dict with:
-        - success: True if guest profile retrieved
-        - guest_id: Guest ID
-        - email: Guest email address
-        - name: Guest name (if set)
-        - email_verified: Email verification status
-
-        On error:
-        - success: False
-        - error_code: Error code (AUTH_REQUIRED, UNAUTHORIZED, etc.)
-        - message: Human-readable error message
-    """
-    from src.services.dynamodb import get_dynamodb_service
-
-    # Decode access token to get Cognito sub claim
-    # Token signature is already verified by AgentCore - just extract claims
-    try:
-        claims = jwt.decode(access_token, options={"verify_signature": False})
-        cognito_sub = claims.get("sub")
-        token_email = claims.get("email")
-    except jwt.DecodeError:
-        return {
-            "success": False,
-            "error_code": ErrorCode.AUTH_REQUIRED.value,
-            "message": "Invalid access token",
-        }
-
-    if not cognito_sub:
-        return {
-            "success": False,
-            "error_code": ErrorCode.AUTH_REQUIRED.value,
-            "message": "Token missing sub claim",
-        }
-
-    # Look up guest by cognito_sub
-    db = get_dynamodb_service()
-    guest = db.get_guest_by_cognito_sub(cognito_sub)
-
-    if not guest:
-        # Try to find by email and bind cognito_sub
-        if token_email:
-            existing_guest = db.get_guest_by_email(token_email)
-            if existing_guest:
-                db.update_guest_cognito_sub(existing_guest.guest_id, cognito_sub)
-                guest = existing_guest
-                guest.cognito_sub = cognito_sub
-
-    if not guest:
-        return {
-            "success": False,
-            "error_code": ErrorCode.UNAUTHORIZED.value,
-            "message": "Guest profile not found. Please complete registration first.",
-        }
-
-    return {
-        "success": True,
-        "guest_id": guest.guest_id,
-        "email": guest.email,
-        "name": guest.name,
-        "email_verified": guest.email_verified,
-    }
+# The @requires_access_token decorator and get_authenticated_guest function
+# were removed because OAuth2 3LO (Three-Legged OAuth) is incompatible with
+# agent-initiated EMAIL_OTP authentication.
+#
+# OAuth2 3LO requires user-initiated auth (frontend calls signIn()).
+# EMAIL_OTP is agent-initiated (backend calls AdminInitiateAuth).
+#
+# For authenticated guest access, use the cognito_sub from verify_cognito_otp
+# and pass the JWT via the auth_token payload field per spec clarification #2.
+# ---------------------------------------------------------------------------

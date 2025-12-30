@@ -117,7 +117,7 @@ def initiate_verification(email: str) -> dict[str, Any]:
         "email": email,
         "is_returning_guest": is_returning,
         "expires_in_minutes": 10,
-        "message": f"A 6-digit verification code has been sent to {email}. The code will expire in 10 minutes.",
+        "message": f"A verification code has been sent to {email}. The code will expire in 10 minutes.",
         "next_step": "Ask the guest to provide the verification code they received.",
         # Include code in dev mode for testing (remove in production)
         "_dev_code": code,
@@ -147,7 +147,7 @@ def verify_code(email: str, code: str) -> dict[str, Any]:
         return {
             "status": "error",
             "code": "INVALID_CODE_FORMAT",
-            "message": "Please enter the 6-digit code you received by email.",
+            "message": "Please enter the code you received by email.",
         }
 
     db = _get_db()

@@ -143,7 +143,7 @@ def create_tables(dynamodb_client: Any) -> None:
                     "Projection": {"ProjectionType": "ALL"},
                 },
                 {
-                    "IndexName": "cognito_sub-index",
+                    "IndexName": "cognito-sub-index",
                     "KeySchema": [{"AttributeName": "cognito_sub", "KeyType": "HASH"}],
                     "Projection": {"ProjectionType": "ALL"},
                 },

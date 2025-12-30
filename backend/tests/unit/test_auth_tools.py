@@ -18,7 +18,6 @@ import pytest
 from moto import mock_aws
 
 from src.models.auth import CognitoAuthChallenge, CognitoAuthState
-from src.models.errors import ErrorCode
 
 
 class TestInitiateCognitoLogin:
@@ -80,7 +79,7 @@ class TestInitiateCognitoLogin:
 
         # Then: Should return EMAIL_DELIVERY_FAILED error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.EMAIL_DELIVERY_FAILED.value
+        assert result["error_code"] == "ERR_EMAIL_DELIVERY_FAILED"  # Contract-defined code
 
     def test_initiate_validates_email_format(self) -> None:
         """Should validate email format before calling Cognito."""
@@ -116,7 +115,7 @@ class TestVerifyCognitoOtp:
         # Given: A valid session token and OTP
         session_token = "mock-session-token-abc123"
         email = "test@example.com"
-        otp_code = "123456"
+        otp_code = "12345678"
         # Session was created recently
         otp_sent_at = datetime.now(timezone.utc).isoformat()
 
@@ -172,14 +171,14 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email=email,
-                    otp_code="000000",
+                    otp_code="00000000",
                     session_token=session_token,
                     otp_sent_at=otp_sent_at,
                 )
 
         # Then: Should return INVALID_OTP error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.INVALID_OTP.value
+        assert result["error_code"] == "INVALID_OTP"  # Contract-defined code
 
     def test_verify_otp_returns_expired_error(
         self,
@@ -204,14 +203,14 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email="test@example.com",
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token="mock-session",
                     otp_sent_at=otp_sent_at,
                 )
 
         # Then: Should return OTP_EXPIRED error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.OTP_EXPIRED.value
+        assert result["error_code"] == "OTP_EXPIRED"  # Contract-defined code
 
     def test_verify_otp_returns_max_attempts_error(
         self,
@@ -234,7 +233,7 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email="test@example.com",
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token="mock-session",
                     otp_sent_at=otp_sent_at,
                     attempts=3,  # Already at max
@@ -242,7 +241,7 @@ class TestVerifyCognitoOtp:
 
         # Then: Should return MAX_ATTEMPTS_EXCEEDED
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.MAX_ATTEMPTS_EXCEEDED.value
+        assert result["error_code"] == "MAX_ATTEMPTS_EXCEEDED"  # Contract-defined code
 
 
 class TestAuthToolsIntegration:
@@ -286,7 +285,7 @@ class TestAuthToolsIntegration:
             ):
                 verify_result = verify_cognito_otp(
                     email=email,
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token=session_token,
                     otp_sent_at=otp_sent_at,
                 )

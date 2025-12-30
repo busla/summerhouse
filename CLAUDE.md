@@ -438,6 +438,9 @@ This project follows the Booking Constitution (v1.1.0):
 - AWS Cognito User Pool (user identity), DynamoDB (OAuth2 session state with TTL) (003-agentcore-identity-oauth2)
 - Python 3.13+ (backend), TypeScript 5.x (frontend) + bedrock-agentcore, boto3, strands-agents, @aws-amplify/ui-react, @aws-amplify/auth (003-agentcore-identity-oauth2)
 - DynamoDB (OAuth2 sessions table with TTL), AWS Cognito (user identity) (003-agentcore-identity-oauth2)
+- Python 3.13+ (backend), TypeScript 5.x strict mode (frontend) + strands-agents, boto3 (cognito-idp), pyjwt (backend); Vercel AI SDK v6, @aws-sdk/client-bedrock-agentcore (frontend) (004-jwt-session-auth)
+- AWS Cognito User Pool (EMAIL_OTP), localStorage (browser session), DynamoDB (guests table) (004-jwt-session-auth)
 
 ## Recent Changes
+- 004-jwt-session-auth: Added JWT token delivery from backend to frontend, TokenDeliveryEvent in tool responses, auth_token in transport payload
 - 002-static-website-waf: Added HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0
