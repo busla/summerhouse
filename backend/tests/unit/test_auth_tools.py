@@ -115,7 +115,7 @@ class TestVerifyCognitoOtp:
         # Given: A valid session token and OTP
         session_token = "mock-session-token-abc123"
         email = "test@example.com"
-        otp_code = "123456"
+        otp_code = "12345678"
         # Session was created recently
         otp_sent_at = datetime.now(timezone.utc).isoformat()
 
@@ -171,7 +171,7 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email=email,
-                    otp_code="000000",
+                    otp_code="00000000",
                     session_token=session_token,
                     otp_sent_at=otp_sent_at,
                 )
@@ -203,7 +203,7 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email="test@example.com",
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token="mock-session",
                     otp_sent_at=otp_sent_at,
                 )
@@ -233,7 +233,7 @@ class TestVerifyCognitoOtp:
             ):
                 result = verify_cognito_otp(
                     email="test@example.com",
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token="mock-session",
                     otp_sent_at=otp_sent_at,
                     attempts=3,  # Already at max
@@ -285,7 +285,7 @@ class TestAuthToolsIntegration:
             ):
                 verify_result = verify_cognito_otp(
                     email=email,
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token=session_token,
                     otp_sent_at=otp_sent_at,
                 )

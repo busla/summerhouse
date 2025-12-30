@@ -92,7 +92,7 @@ class TestOTPFlowIntegration:
             # Step 2: Verify OTP (simulating user entering correct code)
             verify_result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token=session_token,
                 otp_sent_at=otp_sent_at,
                 attempts=0,
@@ -148,7 +148,7 @@ class TestOTPFlowIntegration:
             # Step 2: First attempt with wrong code
             wrong_result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="000000",  # Wrong code
+                otp_code="00000000",  # Wrong code
                 session_token=session_token,
                 otp_sent_at=otp_sent_at,
                 attempts=0,
@@ -161,7 +161,7 @@ class TestOTPFlowIntegration:
             # Step 3: Retry with correct code
             correct_result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",  # Correct code
+                otp_code="12345678",  # Correct code
                 session_token=session_token,
                 otp_sent_at=otp_sent_at,
                 attempts=1,  # Increment attempts
@@ -189,7 +189,7 @@ class TestOTPFlowIntegration:
             # Step 2: Attempt with max attempts already reached
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token=session_token,
                 otp_sent_at=otp_sent_at,
                 attempts=3,  # Max reached
@@ -279,7 +279,7 @@ class TestNewUserRegistration:
 
             result = verify_cognito_otp(
                 email="newuser@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,
@@ -335,7 +335,7 @@ class TestNewUserRegistration:
 
             result = verify_cognito_otp(
                 email="new-email@example.com",  # User changed email in Cognito
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,
@@ -393,7 +393,7 @@ class TestNewUserRegistration:
 
             result = verify_cognito_otp(
                 email="returning@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,

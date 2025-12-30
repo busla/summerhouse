@@ -157,13 +157,13 @@ def verify_cognito_otp(
         - error_code: INVALID_OTP, OTP_EXPIRED, or MAX_ATTEMPTS_EXCEEDED
         - message: Human-readable error message
     """
-    # Validate OTP format (6 digits only)
+    # Validate OTP format (Cognito EMAIL_OTP sends 8-digit codes)
     clean_otp = otp_code.strip()
-    if not clean_otp.isdigit() or len(clean_otp) != 6:
+    if not clean_otp.isdigit() or len(clean_otp) != 8:
         return {
             "success": False,
             "error_code": "INVALID_OTP_FORMAT",
-            "message": f"Please enter the 6-digit code from your email. You entered {len(clean_otp)} characters.",
+            "message": f"Please enter the 8-digit code from your email. You entered {len(clean_otp)} characters.",
             "attempts": attempts,
         }
 

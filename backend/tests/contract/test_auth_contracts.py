@@ -143,7 +143,7 @@ class TestVerifyCognitoOtpErrorContract:
 
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="999999",
+                otp_code="99999999",
                 session_token="valid-session-token",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,
@@ -168,7 +168,7 @@ class TestVerifyCognitoOtpErrorContract:
 
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session-token",
                 otp_sent_at=expired_time.isoformat(),
                 attempts=0,
@@ -191,7 +191,7 @@ class TestVerifyCognitoOtpErrorContract:
 
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session-token",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=3,  # Max attempts reached
@@ -234,7 +234,7 @@ class TestVerifyCognitoOtpErrorContract:
 
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session-token",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,
@@ -337,7 +337,7 @@ class TestTokenDeliveryEventContract:
 
             result = verify_cognito_otp(
                 email="guest@example.com",
-                otp_code="123456",
+                otp_code="12345678",
                 session_token="valid-session-token",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,
@@ -420,7 +420,7 @@ class TestTokenDeliveryEventContract:
 
             result = verify_cognito_otp(
                 email="test@example.com",
-                otp_code="654321",
+                otp_code="65432178",
                 session_token="session-token",
                 otp_sent_at=datetime.now(timezone.utc).isoformat(),
                 attempts=0,

@@ -246,7 +246,7 @@ class TestVerifyOtp:
                 user_pool_id=cognito_user_pool_config["user_pool_id"],
                 client_id=cognito_user_pool_config["client_id"],
             )
-            result = service.verify_otp(auth_state, "123456")
+            result = service.verify_otp(auth_state, "12345678")
 
         # Then: Should return success with cognito_sub
         assert isinstance(result, AuthResult)
@@ -314,7 +314,7 @@ class TestVerifyOtp:
                 user_pool_id=cognito_user_pool_config["user_pool_id"],
                 client_id=cognito_user_pool_config["client_id"],
             )
-            result = service.verify_otp(auth_state, "123456")
+            result = service.verify_otp(auth_state, "12345678")
 
         # Then: Should return OTP_EXPIRED error
         assert isinstance(result, AuthResult)
@@ -344,7 +344,7 @@ class TestVerifyOtp:
                 user_pool_id=cognito_user_pool_config["user_pool_id"],
                 client_id=cognito_user_pool_config["client_id"],
             )
-            result = service.verify_otp(auth_state, "123456")
+            result = service.verify_otp(auth_state, "12345678")
 
         # Then: Should return MAX_ATTEMPTS_EXCEEDED
         assert isinstance(result, AuthResult)

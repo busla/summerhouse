@@ -279,7 +279,7 @@ class TestT042NewGuestCreation:
                 # Step 2: Verify OTP (within same patch context)
                 verify_result = verify_cognito_otp(
                     email=new_email,
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token=session_token,
                     otp_sent_at=otp_sent_at,
                 )
@@ -334,7 +334,7 @@ class TestT042NewGuestCreation:
                 init_result = initiate_cognito_login(new_email)
                 verify_result = verify_cognito_otp(
                     email=new_email,
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token=init_result["session_token"],
                     otp_sent_at=init_result["otp_sent_at"],
                 )
@@ -430,7 +430,7 @@ class TestFullAuthFlowIntegration:
                 init_result = initiate_cognito_login(existing_email)
                 verify_result = verify_cognito_otp(
                     email=existing_email,
-                    otp_code="123456",
+                    otp_code="12345678",
                     session_token=init_result["session_token"],
                     otp_sent_at=init_result["otp_sent_at"],
                 )
