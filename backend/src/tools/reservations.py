@@ -141,6 +141,16 @@ def create_reservation(
     is_available, unavailable_dates = _check_dates_available(db, dates_to_book)
 
     if not is_available:
+        logger.warning(
+            "create_reservation FAILED - dates unavailable",
+            extra={
+                "check_in": check_in,
+                "check_out": check_out,
+                "unavailable_dates": unavailable_dates,
+                "total_dates_requested": len(dates_to_book),
+                "unavailable_count": len(unavailable_dates),
+            },
+        )
         error = ToolError.from_code(
             ErrorCode.DATES_UNAVAILABLE,
             details={"unavailable_dates": ", ".join(unavailable_dates)},

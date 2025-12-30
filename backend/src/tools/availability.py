@@ -76,6 +76,16 @@ def check_availability(check_in: str, check_out: str) -> dict[str, Any]:
             "message": "Check-out date must be after check-in date.",
         }
 
+    # Validate dates are not in the past
+    today = date.today()
+    if start_date < today:
+        return {
+            "status": "error",
+            "is_available": False,
+            "message": f"Cannot book past dates. Today is {today.isoformat()}. Please choose dates from {today.isoformat()} onwards.",
+            "reason": "past_dates",
+        }
+
     # Calculate number of nights
     total_nights = (end_date - start_date).days
 
@@ -87,13 +97,24 @@ def check_availability(check_in: str, check_out: str) -> dict[str, Any]:
     keys = [{"date": d.isoformat()} for d in dates_to_check]
     items = db.batch_get("availability", keys)
 
-    # Check which dates are unavailable
-    unavailable_dates: list[str] = []
-    for item in items:
-        if item.get("status") != AvailabilityStatus.AVAILABLE.value:
-            unavailable_dates.append(item["date"])
+    # Build lookup of dates that EXIST in DynamoDB
+    existing_dates: dict[str, dict] = {item["date"]: item for item in items}
 
-    # If no records exist, assume available (new dates default to available)
+    # Check availability - dates must EXIST and be AVAILABLE
+    # Missing dates are treated as UNAVAILABLE (past dates, beyond seed range, gaps)
+    unavailable_dates: list[str] = []
+    missing_dates: list[str] = []
+    for d in dates_to_check:
+        date_str = d.isoformat()
+        if date_str not in existing_dates:
+            # Date doesn't exist in DynamoDB - treat as unavailable
+            missing_dates.append(date_str)
+            unavailable_dates.append(date_str)
+        elif existing_dates[date_str].get("status") != AvailabilityStatus.AVAILABLE.value:
+            # Date exists but is not available (booked/blocked)
+            unavailable_dates.append(date_str)
+
+    # All dates must exist AND be available
     is_available = len(unavailable_dates) == 0
 
     # Get pricing for the period (simplified - use pricing tool for details)
@@ -196,14 +217,25 @@ def get_calendar(month: str) -> dict[str, Any]:
         if item.get("status") != AvailabilityStatus.AVAILABLE.value:
             unavailable_lookup[item["date"]] = item.get("status", "unavailable")
 
-    # Categorize dates
+    # Build lookup of dates that EXIST in DynamoDB
+    existing_dates: set[str] = {item["date"] for item in items}
+
+    # Categorize dates - missing dates are treated as blocked (not available)
+    today = date.today()
     available_dates: list[str] = []
     booked_dates: list[str] = []
     blocked_dates: list[str] = []
+    past_dates: list[str] = []
 
     for d in all_dates:
         date_str = d.isoformat()
-        if date_str in unavailable_lookup:
+        if d < today:
+            # Past dates cannot be booked
+            past_dates.append(date_str)
+        elif date_str not in existing_dates:
+            # Date doesn't exist in DynamoDB - treat as blocked
+            blocked_dates.append(date_str)
+        elif date_str in unavailable_lookup:
             status = unavailable_lookup[date_str]
             if status == AvailabilityStatus.BOOKED.value:
                 booked_dates.append(date_str)
@@ -212,13 +244,15 @@ def get_calendar(month: str) -> dict[str, Any]:
         else:
             available_dates.append(date_str)
 
+    total_unavailable = len(booked_dates) + len(blocked_dates) + len(past_dates)
     return {
         "status": "success",
         "month": month,
         "available_dates": available_dates,
         "booked_dates": booked_dates,
         "blocked_dates": blocked_dates,
+        "past_dates": past_dates,
         "total_available": len(available_dates),
-        "total_unavailable": len(booked_dates) + len(blocked_dates),
-        "message": f"In {month}, there are {len(available_dates)} available dates and {len(booked_dates) + len(blocked_dates)} unavailable dates.",
+        "total_unavailable": total_unavailable,
+        "message": f"In {month}, there are {len(available_dates)} available dates and {total_unavailable} unavailable dates.",
     }

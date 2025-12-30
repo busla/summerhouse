@@ -37,19 +37,42 @@ def mock_availability_data(
 ) -> None:
     """Configure mock to return specific unavailable dates.
 
+    Note: The service requires dates to EXIST in DynamoDB to be considered available.
+    Missing dates are treated as unavailable (past dates, beyond seed range, etc.).
+    This mock returns AVAILABLE status for all queried dates NOT in unavailable_dates.
+
     Args:
         mock_db: Mock DynamoDB service
         unavailable_dates: List of date strings (YYYY-MM-DD) that are unavailable
     """
+    today = dt.date.today()
+
     def batch_get_side_effect(table: str, keys: list[dict]) -> list[dict]:
-        """Return booked status for specified dates."""
+        """Return availability status for all queried dates.
+
+        - Dates in unavailable_dates: BOOKED status
+        - Past dates: Not returned (simulates not being seeded)
+        - Future dates not in unavailable_dates: AVAILABLE status
+        """
         items = []
         for key in keys:
             date_str = key["date"]
+            date_obj = dt.date.fromisoformat(date_str)
+
+            # Skip past dates (they wouldn't be in the database)
+            if date_obj < today:
+                continue
+
             if date_str in unavailable_dates:
                 items.append({
                     "date": date_str,
                     "status": AvailabilityStatus.BOOKED.value,
+                })
+            else:
+                # Future dates that aren't blocked are AVAILABLE
+                items.append({
+                    "date": date_str,
+                    "status": AvailabilityStatus.AVAILABLE.value,
                 })
         return items
 
@@ -95,13 +118,18 @@ class TestSuggestAlternativeDates:
         mock_db: MagicMock,
     ) -> None:
         """Should suggest dates a few days later when available."""
-        # Given: July 15-20 is booked
-        mock_availability_data(mock_db, ["2025-07-15", "2025-07-16", "2025-07-17", "2025-07-18", "2025-07-19"])
+        # Use future dates (30 days from now)
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
+        # Block the requested dates
+        blocked = [(start + dt.timedelta(days=i)).isoformat() for i in range(5)]
+        mock_availability_data(mock_db, blocked)
 
         # When: Requesting alternatives
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 20),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=5),
             search_window_days=7,
             max_suggestions=3,
         )
@@ -147,13 +175,18 @@ class TestSuggestAlternativeDates:
         mock_db: MagicMock,
     ) -> None:
         """Should not return more than max_suggestions alternatives."""
-        # Given: Many dates are available
-        mock_availability_data(mock_db, [])  # All dates available
+        # Use future dates
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
+        # Block requested dates so we get suggestions
+        blocked = [(start + dt.timedelta(days=i)).isoformat() for i in range(3)]
+        mock_availability_data(mock_db, blocked)
 
         # When: Requesting with limit of 2
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 18),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=3),
             search_window_days=14,
             max_suggestions=2,
         )
@@ -167,14 +200,19 @@ class TestSuggestAlternativeDates:
         mock_db: MagicMock,
     ) -> None:
         """Suggestions should have same number of nights as original request."""
-        # Given: Some dates unavailable
-        mock_availability_data(mock_db, ["2025-07-15", "2025-07-16"])
+        # Use future dates
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
+        # Block first 2 days of requested range
+        blocked = [(start + dt.timedelta(days=i)).isoformat() for i in range(2)]
+        mock_availability_data(mock_db, blocked)
 
         # When: Requesting 5-night stay alternatives
         requested_nights = 5
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 20),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=5),
             search_window_days=7,
             max_suggestions=3,
         )
@@ -189,13 +227,18 @@ class TestSuggestAlternativeDates:
         mock_db: MagicMock,
     ) -> None:
         """Suggestions should be sorted by closeness to original dates."""
-        # Given: Various dates available
-        mock_availability_data(mock_db, ["2025-07-15"])  # Only requested start blocked
+        # Use future dates
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
+        # Block only the first date
+        blocked = [start.isoformat()]
+        mock_availability_data(mock_db, blocked)
 
         # When: Requesting alternatives
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 18),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=3),
             search_window_days=7,
             max_suggestions=5,
         )
@@ -239,13 +282,17 @@ class TestSuggestAlternativeDatesEdgeCases:
         mock_db: MagicMock,
     ) -> None:
         """Should handle single night stay requests."""
-        # Given: Requested single night is booked
-        mock_availability_data(mock_db, ["2025-07-15"])
+        # Use future dates
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
+        # Block the requested single night
+        mock_availability_data(mock_db, [start.isoformat()])
 
         # When: Requesting 1-night alternatives
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 16),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=1),
             search_window_days=7,
             max_suggestions=3,
         )
@@ -261,13 +308,17 @@ class TestSuggestAlternativeDatesEdgeCases:
         mock_db: MagicMock,
     ) -> None:
         """Suggestions should include direction indicator."""
+        # Use future dates
+        today = dt.date.today()
+        start = today + dt.timedelta(days=30)
+
         # Given: Some dates unavailable
-        mock_availability_data(mock_db, ["2025-07-15"])
+        mock_availability_data(mock_db, [start.isoformat()])
 
         # When: Requesting alternatives
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 15),
-            requested_end=dt.date(2025, 7, 18),
+            requested_start=start,
+            requested_end=start + dt.timedelta(days=3),
             search_window_days=7,
             max_suggestions=5,
         )
@@ -292,25 +343,32 @@ class TestSuggestAlternativeDatesIntegration:
         mock_db: MagicMock,
     ) -> None:
         """Should find gaps between multiple blocked periods."""
-        # Given: Two separate blocked periods
+        # Use future dates
+        today = dt.date.today()
+        base = today + dt.timedelta(days=30)  # Base date 30 days from now
+
+        # Given: Two separate blocked periods (5 days each, with a 5-day gap)
+        # Block 1: base to base+4 (days 0-4)
+        # Gap: base+5 to base+9 (days 5-9) - available
+        # Block 2: base+10 to base+14 (days 10-14)
         blocked = (
-            # Block 1: July 10-14
-            ["2025-07-10", "2025-07-11", "2025-07-12", "2025-07-13", "2025-07-14"]
+            # Block 1: 5 consecutive days
+            [(base + dt.timedelta(days=i)).isoformat() for i in range(5)]
             +
-            # Block 2: July 20-24
-            ["2025-07-20", "2025-07-21", "2025-07-22", "2025-07-23", "2025-07-24"]
+            # Block 2: 5 consecutive days starting at day 10
+            [(base + dt.timedelta(days=10 + i)).isoformat() for i in range(5)]
         )
         mock_availability_data(mock_db, blocked)
 
-        # When: Requesting alternatives for dates in middle (July 15-19)
-        # which is actually available
+        # When: Requesting alternatives for dates in block 1
+        # Request a 5-night stay starting at base+2 (falls in block 1)
         suggestions = availability_service.suggest_alternative_dates(
-            requested_start=dt.date(2025, 7, 12),  # Falls in block 1
-            requested_end=dt.date(2025, 7, 17),  # 5 nights
+            requested_start=base + dt.timedelta(days=2),  # Falls in block 1
+            requested_end=base + dt.timedelta(days=7),  # 5 nights
             search_window_days=10,
             max_suggestions=3,
         )
 
-        # Then: Should find the gap (July 15-19 area)
+        # Then: Should find the gap between blocks
         # There should be suggestions outside blocked periods
         assert len(suggestions) > 0
