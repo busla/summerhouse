@@ -22,12 +22,6 @@ variable "bedrock_model_id" {
   default     = "anthropic.claude-sonnet-4-20250514"
 }
 
-variable "ses_from_email" {
-  description = "Verified SES email address for sending verification codes"
-  type        = string
-  default     = ""
-}
-
 variable "domain_name" {
   description = "Domain name for the frontend (optional, uses CloudFront default if not set)"
   type        = string
@@ -86,20 +80,48 @@ variable "enable_agentcore_observability" {
 }
 
 # -----------------------------------------------------------------------------
-# Anonymous User Configuration
+# Cognito Authentication Configuration
 # -----------------------------------------------------------------------------
 
-variable "anonymous_user_email" {
+variable "cognito_user_pool_tier" {
   description = <<-EOT
-    Email address for the shared anonymous user. All anonymous visitors authenticate
-    as this single shared user via Cognito custom auth (1 MAU cost regardless of traffic).
-
-    The JWT for this user has email_verified=false, allowing tools to distinguish
-    anonymous users from verified users and gate booking operations accordingly.
-
-    Example: "anonymous@guest.local"
-    Leave empty to disable anonymous access.
+    Cognito User Pool tier. Set to "ESSENTIALS" to enable native EMAIL_OTP auth.
+    Options: "LITE" (free), "ESSENTIALS" (paid, required for EMAIL_OTP), "PLUS" (enterprise)
   EOT
   type        = string
-  default     = "anonymous@guest.local"
+  default     = "LITE"
 }
+
+variable "enable_cognito_email_otp" {
+  description = <<-EOT
+    Enable native Cognito USER_AUTH flow with EMAIL_OTP (requires ESSENTIALS tier).
+    When enabled, Cognito handles OTP generation and email delivery natively.
+  EOT
+  type        = bool
+  default     = false
+}
+
+# -----------------------------------------------------------------------------
+# SES Email Configuration for Cognito
+# -----------------------------------------------------------------------------
+
+variable "ses_email_identity" {
+  description = <<-EOT
+    SES verified identity (domain or email) for Cognito to send emails.
+    Examples: "example.com" (domain) or "noreply@example.com" (email).
+    If empty, Cognito uses its default email service (limited to 50/day).
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ses_from_email" {
+  description = <<-EOT
+    The FROM email address for Cognito emails when using SES.
+    Must be within the verified SES identity domain.
+    If empty but ses_email_identity is set, uses "no-reply@{ses_email_identity}".
+  EOT
+  type        = string
+  default     = ""
+}
+

@@ -1,5 +1,7 @@
 # Cognito Passwordless Module - Variables
 # Uses cloudposse/label/null context pattern - receives context from root module
+#
+# Simplified for native USER_AUTH with EMAIL_OTP (no Lambda triggers)
 
 variable "context" {
   type = any
@@ -41,55 +43,67 @@ variable "context" {
   }
 }
 
-variable "ses_from_email" {
-  description = "Verified SES email address for sending verification codes"
-  type        = string
-}
-
-variable "verification_table_name" {
-  description = "Name of the DynamoDB table for verification codes"
-  type        = string
-}
-
-variable "verification_table_arn" {
-  description = "ARN of the DynamoDB table for verification codes"
-  type        = string
-}
-
-variable "code_ttl_seconds" {
-  description = "Time-to-live for verification codes in seconds"
-  type        = number
-  default     = 300 # 5 minutes
-}
-
-variable "max_attempts" {
-  description = "Maximum verification attempts before code expires"
-  type        = number
-  default     = 3
-}
-
-variable "code_length" {
-  description = "Length of the verification code"
-  type        = number
-  default     = 6
-}
-
 # -----------------------------------------------------------------------------
-# Anonymous/Guest Access Configuration
+# Cognito Tier and Auth Configuration
 # -----------------------------------------------------------------------------
 
-variable "anonymous_user_email" {
+variable "user_pool_tier" {
   description = <<-EOT
-    Email address for the shared anonymous user. When set, the custom auth Lambdas
-    will auto-succeed for this email (no verification email sent). All anonymous
-    visitors authenticate as this single shared user (1 MAU cost).
+    Cognito User Pool tier. Options:
+    - "LITE": Free tier with limited features (default)
+    - "ESSENTIALS": Paid tier required for native EMAIL_OTP auth
+    - "PLUS": Enterprise tier with advanced security
 
-    The JWT for this user will have email_verified=false, which tools can check
-    to distinguish anonymous users from verified users.
+    Set to "ESSENTIALS" to enable native USER_AUTH with EMAIL_OTP.
+  EOT
+  type        = string
+  default     = "LITE"
 
-    Example: "anonymous@guest.local"
+  validation {
+    condition     = contains(["LITE", "ESSENTIALS", "PLUS"], var.user_pool_tier)
+    error_message = "user_pool_tier must be LITE, ESSENTIALS, or PLUS"
+  }
+}
+
+variable "enable_user_auth_email_otp" {
+  description = <<-EOT
+    Enable native Cognito USER_AUTH flow with EMAIL_OTP.
+    Requires user_pool_tier = "ESSENTIALS" or higher.
+
+    When enabled:
+    - Adds USER_AUTH to explicit_auth_flows
+    - Configures AllowedFirstAuthFactors = ["EMAIL_OTP"]
+    - Cognito handles OTP generation and email delivery natively
+  EOT
+  type        = bool
+  default     = false
+}
+
+# -----------------------------------------------------------------------------
+# SES Email Configuration
+# -----------------------------------------------------------------------------
+
+variable "ses_email_identity" {
+  description = <<-EOT
+    SES email identity (verified email or domain) for sending Cognito emails.
+    Examples:
+    - "noreply@example.com" (verified email)
+    - "example.com" (verified domain - sends from no-reply@example.com)
+
+    If not set, Cognito uses its default email service (limited to 50 emails/day).
   EOT
   type        = string
   default     = ""
 }
 
+variable "ses_from_email" {
+  description = <<-EOT
+    The FROM email address for Cognito emails when using SES.
+    Must be within the verified SES identity domain.
+    Example: "noreply@example.com"
+
+    If not set but ses_email_identity is set, uses "no-reply@{ses_email_identity}".
+  EOT
+  type        = string
+  default     = ""
+}

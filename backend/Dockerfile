@@ -15,6 +15,9 @@ RUN uv sync --frozen --no-cache --no-dev
 # Copy source code
 COPY src/ ./src/
 
+# Force unbuffered Python output (ensures prints appear immediately in CloudWatch)
+ENV PYTHONUNBUFFERED=1
+
 # Expose the standard AgentCore Runtime port
 EXPOSE 8080
 
@@ -25,3 +28,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Run the AgentCore entrypoint
 # Using opentelemetry-instrument for observability when ADOT is configured
 CMD ["uv", "run", "python", "-m", "src.agent_app"]
+
+# Rebuild trigger: 2025-12-29T22:57:00Z

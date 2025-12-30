@@ -91,14 +91,20 @@ module "guests" {
 
   attributes = [
     { name = "guest_id", type = "S" },
-    { name = "email", type = "S" }
+    { name = "email", type = "S" },
+    { name = "cognito_sub", type = "S" }
   ]
 
-  # GSI for querying by email
+  # GSI for querying by email and by cognito_sub (for OAuth2 binding)
   global_secondary_indexes = [
     {
       name            = "email-index"
       hash_key        = "email"
+      projection_type = "ALL"
+    },
+    {
+      name            = "cognito-sub-index"
+      hash_key        = "cognito_sub"
       projection_type = "ALL"
     }
   ]
@@ -194,6 +200,32 @@ module "verification_codes" {
   ]
 
   # TTL for automatic expiration
+  ttl_enabled        = true
+  ttl_attribute_name = "expires_at"
+
+  tags = module.label.tags
+}
+
+# -----------------------------------------------------------------------------
+# OAuth2 Sessions Table (with TTL)
+# -----------------------------------------------------------------------------
+# Tracks OAuth2 session_id → guest_email mapping for user identity verification
+# in the AgentCore two-stage callback flow. AgentCore handles state/PKCE internally.
+
+module "oauth2_sessions" {
+  source  = "terraform-aws-modules/dynamodb-table/aws"
+  version = "~> 5.0"
+
+  name     = "${module.label.id}-oauth2-sessions"
+  hash_key = "session_id"
+
+  billing_mode = "PAY_PER_REQUEST"
+
+  attributes = [
+    { name = "session_id", type = "S" }
+  ]
+
+  # TTL for automatic expiration (10 minutes)
   ttl_enabled        = true
   ttl_attribute_name = "expires_at"
 

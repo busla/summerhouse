@@ -125,3 +125,19 @@ variable "waf_managed_rules" {
   }))
   default = []
 }
+
+# -----------------------------------------------------------------------------
+# API Gateway Origin Variables
+# -----------------------------------------------------------------------------
+
+variable "api_gateway_url" {
+  description = "API Gateway URL to add as origin for /api/* routes (e.g., https://abc123.execute-api.eu-west-1.amazonaws.com)"
+  type        = string
+  default     = null
+}
+
+variable "api_path_pattern" {
+  description = "Path pattern for API Gateway origin (default: /api/*)"
+  type        = string
+  default     = "/api/*"
+}

@@ -40,6 +40,36 @@ if not os.environ.get("AWS_PROFILE") and not os.environ.get("AWS_ACCESS_KEY_ID")
 # === DynamoDB Fixtures ===
 
 
+@pytest.fixture(autouse=True)
+def reset_dynamodb_singleton() -> Generator[None, None, None]:
+    """Reset DynamoDB singleton before and after each test.
+
+    This ensures tests using mock_aws get a fresh service instance
+    inside the mock context rather than reusing a singleton from
+    a previous test or non-mocked context.
+    """
+    from src.services.dynamodb import reset_dynamodb_service
+
+    reset_dynamodb_service()
+    yield
+    reset_dynamodb_service()
+
+
+@pytest.fixture(autouse=True)
+def reset_auth_service_singleton() -> Generator[None, None, None]:
+    """Reset auth service singleton before and after each test.
+
+    This ensures tests using mock_cognito_idp get a fresh service instance
+    inside the mock context rather than reusing a singleton from
+    a previous test or non-mocked context.
+    """
+    from src.tools.auth import _reset_auth_service
+
+    _reset_auth_service()
+    yield
+    _reset_auth_service()
+
+
 @pytest.fixture
 def aws_credentials() -> None:
     """Mocked AWS Credentials for moto.
@@ -104,11 +134,17 @@ def create_tables(dynamodb_client: Any) -> None:
             "AttributeDefinitions": [
                 {"AttributeName": "guest_id", "AttributeType": "S"},
                 {"AttributeName": "email", "AttributeType": "S"},
+                {"AttributeName": "cognito_sub", "AttributeType": "S"},
             ],
             "GlobalSecondaryIndexes": [
                 {
                     "IndexName": "email-index",
                     "KeySchema": [{"AttributeName": "email", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    "IndexName": "cognito_sub-index",
+                    "KeySchema": [{"AttributeName": "cognito_sub", "KeyType": "HASH"}],
                     "Projection": {"ProjectionType": "ALL"},
                 },
             ],
@@ -304,6 +340,70 @@ def mock_ses_client() -> Generator[MagicMock, None, None]:
         mock_ses.send_email.return_value = {"MessageId": "mock-message-id"}
 
         yield mock_ses
+
+
+@pytest.fixture
+def mock_cognito_idp() -> Generator[MagicMock, None, None]:
+    """Mock Cognito IDP client for passwordless auth testing.
+
+    Provides realistic responses for USER_AUTH flow with EMAIL_OTP challenge.
+    """
+    import base64
+    import json
+
+    mock_client = MagicMock()
+
+    # Mock initiate_auth response (triggers EMAIL_OTP challenge)
+    # Default response simulates an EXISTING passwordless user:
+    # - AvailableChallenges contains only EMAIL_OTP (no PASSWORD options)
+    # - For non-existent users, Cognito returns PASSWORD_SRP/PASSWORD in AvailableChallenges
+    #   (masked by prevent_user_existence_errors setting)
+    mock_client.initiate_auth.return_value = {
+        "ChallengeName": "EMAIL_OTP",
+        "Session": "mock-session-token-abc123",
+        "ChallengeParameters": {
+            "CODE_DELIVERY_DELIVERY_MEDIUM": "EMAIL",
+            "CODE_DELIVERY_DESTINATION": "t***@example.com",
+        },
+        "AvailableChallenges": ["EMAIL_OTP"],  # Only EMAIL_OTP for real passwordless users
+    }
+
+    # Create a valid mock JWT ID token (header.payload.signature)
+    # The payload contains the cognito sub and email claims
+    id_token_payload = {
+        "sub": "mock-cognito-sub-12345",
+        "email": "test@example.com",
+        "email_verified": True,
+        "iss": "https://cognito-idp.eu-west-1.amazonaws.com/eu-west-1_TestPool",
+        "aud": "test-client-id-123",
+    }
+    encoded_header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').decode().rstrip("=")
+    encoded_payload = base64.urlsafe_b64encode(
+        json.dumps(id_token_payload).encode()
+    ).decode().rstrip("=")
+    mock_id_token = f"{encoded_header}.{encoded_payload}.mock-signature"
+
+    # Mock respond_to_auth_challenge success response
+    mock_client.respond_to_auth_challenge.return_value = {
+        "AuthenticationResult": {
+            "AccessToken": "mock-access-token",
+            "IdToken": mock_id_token,
+            "RefreshToken": "mock-refresh-token",
+            "ExpiresIn": 3600,
+            "TokenType": "Bearer",
+        },
+    }
+
+    yield mock_client
+
+
+@pytest.fixture
+def cognito_user_pool_config() -> dict[str, str]:
+    """Configuration for Cognito user pool in tests."""
+    return {
+        "user_pool_id": "eu-west-1_TestPool",
+        "client_id": "test-client-id-123",
+    }
 
 
 # === Helper Fixtures ===

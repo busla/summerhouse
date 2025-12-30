@@ -16,7 +16,7 @@ An AI agent-driven vacation rental booking platform where the conversational age
 - **Testing**: Vitest (unit), Playwright (E2E)
 
 ### Backend
-- **Framework**: Strands Agents (Python 3.12+)
+- **Framework**: Strands Agents (Python 3.13+)
 - **API**: FastAPI for REST endpoints
 - **Data Validation**: Pydantic v2 (strict mode)
 - **LLM**: Amazon Bedrock (Claude Sonnet)
@@ -119,6 +119,44 @@ Use modules from [terraform-aws-modules](https://github.com/terraform-aws-module
 **NEVER run `terraform` or `terragrunt` commands directly. ALL commands via Taskfile.**
 
 If a `task tf:*` command fails, report the error to the user. Do NOT bypass with raw terraform.
+
+### NON-NEGOTIABLE: Terraform Must Be Fully Declarative
+
+**Terraform must handle EVERYTHING. NEVER require users to run external commands before `task tf:apply`.**
+
+This means:
+- **NO** pre-build steps outside Terraform (e.g., "run this script first")
+- **NO** workarounds like "run apply twice"
+- **NO** external dependencies that must exist before plan/apply
+
+**For Lambda functions with `terraform-aws-modules/lambda/aws`:**
+- **DO**: Use `source_path` to let the module build packages declaratively
+- **DO**: Use `pip_requirements` for Python dependencies
+- **DO**: Use the module's built-in packaging features
+- **DON'T**: Use `local_existing_package` which requires pre-built files (causes `fileexists()` failures during plan)
+- **DON'T**: Use `terraform_data` or `null_resource` to build packages (timing issues with plan-phase function evaluation)
+
+Example of correct Lambda configuration:
+```hcl
+module "lambda" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.1"
+
+  function_name = "my-function"
+  handler       = "app.handler"
+  runtime       = "python3.13"
+
+  # Let the module build the package declaratively
+  source_path = [
+    {
+      path             = "${path.module}/../backend/src"
+      pip_requirements = "${path.module}/../backend/requirements-api.txt"
+    }
+  ]
+}
+```
+
+**Violations of this rule create broken workflows that require manual intervention.**
 
 ### Frontend Auto-Deploy via Terraform
 
@@ -396,6 +434,10 @@ This project follows the Booking Constitution (v1.1.0):
 ## Active Technologies
 - HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0 (002-static-website-waf)
 - N/A (Infrastructure as Code module) (002-static-website-waf)
+- Python 3.13+ (backend), TypeScript 5.x strict mode (frontend) + Strands Agents, bedrock-agentcore, boto3 (cognito-idp), FastAPI (backend); Vercel AI SDK v6, @aws-sdk/client-cognito-identity-provider (frontend) (003-agentcore-identity-oauth2)
+- AWS Cognito User Pool (user identity), DynamoDB (OAuth2 session state with TTL) (003-agentcore-identity-oauth2)
+- Python 3.13+ (backend), TypeScript 5.x (frontend) + bedrock-agentcore, boto3, strands-agents, @aws-amplify/ui-react, @aws-amplify/auth (003-agentcore-identity-oauth2)
+- DynamoDB (OAuth2 sessions table with TTL), AWS Cognito (user identity) (003-agentcore-identity-oauth2)
 
 ## Recent Changes
 - 002-static-website-waf: Added HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0

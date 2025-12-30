@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Authentication Tool Definitions",
+  "description": "Strands @tool definitions for AgentCore Identity OAuth2 authentication",
+  "version": "1.0.0",
+  "metadata": {
+    "framework": "strands-agents",
+    "python_version": "3.13+",
+    "deployment": "aws-agentcore-runtime",
+    "tool_pattern": "strands-native + bedrock-agentcore",
+    "notes": "Authentication tools use @requires_access_token decorator from bedrock_agentcore.identity for automatic OAuth2 token injection."
+  },
+  "tool_modules": {
+    "auth": {
+      "file": "backend/src/tools/auth.py",
+      "tools": ["initiate_cognito_login", "get_authenticated_guest"],
+      "dependencies": [
+        "bedrock-agentcore",
+        "boto3",
+        "strands-agents"
+      ],
+      "services_used": [
+        "backend/src/services/auth_service.py",
+        "backend/src/services/identity_client.py"
+      ],
+      "cognito_resources": [
+        "user_pool_id",
+        "user_pool_client_id",
+        "oauth2_callback_url"
+      ],
+      "agentcore_resources": [
+        "identity_provider_name"
+      ]
+    }
+  },
+  "decorator_patterns": {
+    "requires_access_token": {
+      "description": "Decorator from bedrock_agentcore.identity that automatically handles OAuth2 token acquisition",
+      "import": "from bedrock_agentcore.identity import requires_access_token",
+      "parameters": {
+        "provider_name": {
+          "type": "str",
+          "description": "Name of the OAuth2 provider configured in AgentCore Identity",
+          "example": "CognitoIdentityProvider"
+        },
+        "scopes": {
+          "type": "list[str]",
+          "description": "OAuth2 scopes to request",
+          "example": ["openid", "email"]
+        },
+        "auth_flow": {
+          "type": "str",
+          "description": "OAuth2 flow type",
+          "values": ["USER_FEDERATION", "CLIENT_CREDENTIALS"],
+          "example": "USER_FEDERATION"
+        },
+        "on_auth_url": {
+          "type": "callable",
+          "description": "Callback function that receives the authorization URL to stream to client",
+          "signature": "Callable[[str], None]"
+        },
+        "callback_url": {
+          "type": "str",
+          "description": "OAuth2 callback URL for authorization code exchange",
+          "example": "https://api.example.com/auth/callback"
+        },
+        "custom_state": {
+          "type": "dict | None",
+          "description": "Custom data to pass through OAuth2 state parameter for session binding",
+          "example": {"conversation_id": "conv-uuid"}
+        }
+      },
+      "code_example": "@tool\n@requires_access_token(\n    provider_name=\"CognitoIdentityProvider\",\n    scopes=[\"openid\", \"email\"],\n    auth_flow=\"USER_FEDERATION\",\n    on_auth_url=stream_auth_url_to_client,\n    callback_url=os.getenv(\"OAUTH2_CALLBACK_URL\")\n)\nasync def get_authenticated_guest(*, access_token: str) -> dict:\n    \"\"\"Get the authenticated guest's profile.\n    \n    The access_token parameter is automatically injected by the decorator.\n    \"\"\"\n    pass"
+    }
+  },
+  "tool_definitions": {
+    "initiate_cognito_login": {
+      "description": "Initiate passwordless EMAIL_OTP login flow via Cognito USER_AUTH",
+      "category": "authentication",
+      "side_effects": ["sends_email"],
+      "requires_auth": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Guest's email address for authentication"
+          }
+        },
+        "required": ["email"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether OTP was sent successfully"
+          },
+          "session_token": {
+            "type": "string",
+            "description": "Cognito session token for OTP verification (opaque to agent)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message for agent to relay"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "description": "OTP validity duration (300 seconds = 5 minutes)"
+          }
+        },
+        "required": ["success", "message"]
+      },
+      "errors": [
+        "EMAIL_DELIVERY_FAILED",
+        "USER_NOT_FOUND",
+        "RATE_LIMITED"
+      ],
+      "notes": "Creates Cognito user if not exists. Cognito handles OTP generation and email delivery."
+    },
+    "verify_cognito_otp": {
+      "description": "Verify the OTP code entered by guest to complete Cognito authentication",
+      "category": "authentication",
+      "side_effects": ["creates_session"],
+      "requires_auth": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Guest's email address"
+          },
+          "otp_code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "6-digit OTP code from email"
+          },
+          "session_token": {
+            "type": "string",
+            "description": "Session token from initiate_cognito_login"
+          }
+        },
+        "required": ["email", "otp_code", "session_token"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether authentication succeeded"
+          },
+          "guest_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guest ID bound to session (if success)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message"
+          },
+          "attempts_remaining": {
+            "type": "integer",
+            "description": "Remaining OTP attempts (3 max)"
+          }
+        },
+        "required": ["success", "message"]
+      },
+      "errors": [
+        "INVALID_OTP",
+        "OTP_EXPIRED",
+        "MAX_ATTEMPTS_EXCEEDED",
+        "SESSION_EXPIRED"
+      ],
+      "notes": "On success, binds Cognito sub to Guest record and establishes authenticated session."
+    },
+    "get_authenticated_guest": {
+      "description": "Get the currently authenticated guest's profile. Triggers OAuth2 flow if not authenticated.",
+      "category": "authentication",
+      "side_effects": ["may_trigger_oauth2"],
+      "requires_auth": true,
+      "decorator": "@requires_access_token",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "guest_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guest ID"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Verified email address"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Guest's full name"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "description": "Email verification status"
+          }
+        },
+        "required": ["guest_id", "email", "email_verified"]
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "AUTH_CANCELLED",
+        "SESSION_EXPIRED"
+      ],
+      "notes": "Uses @requires_access_token decorator. If no valid token, decorator triggers OAuth2 flow and streams auth URL to client."
+    }
+  },
+  "service_interfaces": {
+    "auth_service": {
+      "file": "backend/src/services/auth_service.py",
+      "class": "AuthService",
+      "methods": {
+        "initiate_passwordless_auth": {
+          "description": "Start Cognito USER_AUTH flow with EMAIL_OTP",
+          "signature": "async def initiate_passwordless_auth(self, email: str) -> CognitoAuthState",
+          "uses": ["boto3.client('cognito-idp').initiate_auth"]
+        },
+        "verify_otp": {
+          "description": "Verify OTP and complete authentication",
+          "signature": "async def verify_otp(self, email: str, otp_code: str, session: str) -> AuthResult",
+          "uses": ["boto3.client('cognito-idp').respond_to_auth_challenge"]
+        },
+        "get_or_create_guest": {
+          "description": "Get existing guest by Cognito sub or create new guest",
+          "signature": "async def get_or_create_guest(self, cognito_sub: str, email: str) -> Guest"
+        }
+      }
+    },
+    "identity_client_wrapper": {
+      "file": "backend/src/services/identity_client.py",
+      "class": "AgentCoreIdentityService",
+      "methods": {
+        "get_workload_token": {
+          "description": "Get agent workload access token",
+          "signature": "async def get_workload_token(self) -> WorkloadToken",
+          "uses": ["IdentityClient.get_workload_access_token"]
+        },
+        "create_oauth2_session": {
+          "description": "Create OAuth2 session and generate auth URL",
+          "signature": "async def create_oauth2_session(self, conversation_id: str, guest_email: str | None) -> OAuth2Session",
+          "uses": ["IdentityClient.get_token"]
+        },
+        "complete_oauth2": {
+          "description": "Complete OAuth2 flow after callback",
+          "signature": "async def complete_oauth2(self, session_id: str, auth_code: str) -> TokenResult",
+          "uses": ["IdentityClient.complete_resource_token_auth"]
+        }
+      }
+    }
+  },
+  "error_codes": {
+    "AUTH_REQUIRED": {
+      "code": "ERR_AUTH_001",
+      "message": "Authentication required to perform this action",
+      "recovery": "Initiate login flow with initiate_cognito_login"
+    },
+    "INVALID_OTP": {
+      "code": "ERR_AUTH_002",
+      "message": "The verification code is incorrect",
+      "recovery": "Ask guest to re-enter code or request new code"
+    },
+    "OTP_EXPIRED": {
+      "code": "ERR_AUTH_003",
+      "message": "The verification code has expired",
+      "recovery": "Request a new verification code"
+    },
+    "MAX_ATTEMPTS_EXCEEDED": {
+      "code": "ERR_AUTH_004",
+      "message": "Maximum verification attempts exceeded",
+      "recovery": "Request a new verification code"
+    },
+    "EMAIL_DELIVERY_FAILED": {
+      "code": "ERR_AUTH_005",
+      "message": "Failed to send verification email",
+      "recovery": "Verify email address is correct and try again"
+    },
+    "SESSION_EXPIRED": {
+      "code": "ERR_AUTH_006",
+      "message": "Authentication session has expired",
+      "recovery": "Start a new login flow"
+    },
+    "AUTH_CANCELLED": {
+      "code": "ERR_AUTH_007",
+      "message": "Authentication was cancelled by user",
+      "recovery": "Offer to restart authentication if needed"
+    },
+    "OAUTH2_STATE_INVALID": {
+      "code": "ERR_AUTH_008",
+      "message": "OAuth2 state validation failed",
+      "recovery": "Restart authentication flow"
+    }
+  },
+  "conversation_patterns": {
+    "passwordless_login_flow": {
+      "description": "Typical conversation flow for EMAIL_OTP authentication",
+      "steps": [
+        {
+          "step": 1,
+          "user_intent": "User wants to make a booking",
+          "agent_action": "Inform user authentication is needed, ask for email"
+        },
+        {
+          "step": 2,
+          "user_provides": "email address",
+          "agent_action": "Call initiate_cognito_login with email",
+          "tool_result": "OTP sent, session_token returned"
+        },
+        {
+          "step": 3,
+          "agent_says": "A verification code has been sent to your email. Please enter the 6-digit code.",
+          "user_provides": "6-digit OTP code"
+        },
+        {
+          "step": 4,
+          "agent_action": "Call verify_cognito_otp with email, code, session_token",
+          "tool_result_success": "Guest authenticated, guest_id bound to session",
+          "tool_result_failure": "Invalid code, X attempts remaining"
+        },
+        {
+          "step": 5,
+          "agent_action_success": "Proceed with booking flow using authenticated session",
+          "agent_action_failure": "Ask user to re-enter code or offer to resend"
+        }
+      ]
+    },
+    "oauth2_3lo_flow": {
+      "description": "Three-legged OAuth2 flow for protected tools",
+      "steps": [
+        {
+          "step": 1,
+          "agent_action": "Call tool decorated with @requires_access_token",
+          "decorator_action": "Check for valid access token"
+        },
+        {
+          "step": 2,
+          "condition": "No valid token",
+          "decorator_action": "Call on_auth_url callback with authorization URL",
+          "user_sees": "Please authenticate by clicking this link: [auth_url]"
+        },
+        {
+          "step": 3,
+          "user_action": "Clicks link, completes Cognito login",
+          "system_action": "OAuth2 callback receives auth code + state"
+        },
+        {
+          "step": 4,
+          "system_action": "Look up OAuth2Session by state, call complete_resource_token_auth",
+          "result": "Tokens returned, bound to conversation_id"
+        },
+        {
+          "step": 5,
+          "system_action": "Resume tool execution with injected access_token",
+          "user_sees": "Tool result (e.g., guest profile)"
+        }
+      ]
+    }
+  }
+}

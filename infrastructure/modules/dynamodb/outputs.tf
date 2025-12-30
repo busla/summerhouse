@@ -60,6 +60,16 @@ output "verification_codes_table_arn" {
   value       = module.verification_codes.dynamodb_table_arn
 }
 
+output "oauth2_sessions_table_name" {
+  description = "Name of the OAuth2 sessions table"
+  value       = module.oauth2_sessions.dynamodb_table_id
+}
+
+output "oauth2_sessions_table_arn" {
+  description = "ARN of the OAuth2 sessions table"
+  value       = module.oauth2_sessions.dynamodb_table_arn
+}
+
 output "table_arns" {
   description = "List of all table ARNs for IAM policies"
   value = [
@@ -69,5 +79,11 @@ output "table_arns" {
     module.pricing.dynamodb_table_arn,
     module.payments.dynamodb_table_arn,
     module.verification_codes.dynamodb_table_arn,
+    module.oauth2_sessions.dynamodb_table_arn,
   ]
+}
+
+output "table_prefix" {
+  description = "Table name prefix (for DYNAMODB_TABLE_PREFIX env var)"
+  value       = module.label.id
 }

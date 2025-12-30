@@ -1,15 +1,15 @@
 # Cognito Passwordless Module - Main Resources
-# Implements passwordless email verification using Cognito custom auth challenge
+# Implements passwordless email verification using Cognito native EMAIL_OTP
 #
-# Flow:
-# 1. User enters email -> InitiateAuth (CUSTOM_AUTH)
-# 2. DefineAuthChallenge Lambda -> Returns CUSTOM_CHALLENGE
-# 3. CreateAuthChallenge Lambda -> Generates code, sends email via SES
-# 4. User enters code -> RespondToAuthChallenge
-# 5. VerifyAuthChallenge Lambda -> Validates code from DynamoDB
-# 6. DefineAuthChallenge Lambda -> Returns tokens if valid
+# Flow (Native USER_AUTH with EMAIL_OTP):
+# 1. Backend calls admin_create_user (if user doesn't exist) with email_verified=true
+# 2. Backend calls initiate_auth with USER_AUTH flow, PREFERRED_CHALLENGE=EMAIL_OTP
+# 3. Cognito sends OTP to user's email natively (no Lambda triggers needed)
+# 4. User enters code -> Backend calls respond_to_auth_challenge
+# 5. Cognito validates code and returns tokens
 #
 # Pattern: Single label module with context from root
+# Requires: ESSENTIALS tier User Pool for native EMAIL_OTP
 
 terraform {
   required_version = ">= 1.5.0"
@@ -18,14 +18,6 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = ">= 5.0"
-    }
-    archive = {
-      source  = "hashicorp/archive"
-      version = ">= 2.0"
-    }
-    null = {
-      source  = "hashicorp/null"
-      version = ">= 3.0"
     }
   }
 }
@@ -45,268 +37,8 @@ module "label" {
   name = "auth"
 }
 
-locals {
-  lambda_runtime = "nodejs20.x"
-  lambdas_dir    = "${path.module}/lambdas"
-}
-
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
-
-# Note: Uses existing verification_codes table from dynamodb module
-# Table is passed in via var.verification_table_name and var.verification_table_arn
-
-# -----------------------------------------------------------------------------
-# IAM Role for Lambda Functions (using terraform-aws-modules/iam)
-# -----------------------------------------------------------------------------
-
-module "lambda_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role"
-  version = "~> 6.0"
-
-  create = true
-  name   = "${module.label.id}-lambda"
-
-  # Lambda service can assume this role
-  trust_policy_permissions = {
-    LambdaServiceTrust = {
-      actions = ["sts:AssumeRole"]
-      principals = [{
-        type        = "Service"
-        identifiers = ["lambda.amazonaws.com"]
-      }]
-    }
-  }
-
-  # Attach custom policy
-  policies = {
-    lambda = module.lambda_policy.arn
-  }
-
-  tags = module.label.tags
-}
-
-module "lambda_policy" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-policy"
-  version = "~> 6.0"
-
-  name        = "${module.label.id}-lambda-policy"
-  path        = "/"
-  description = "Policy for Cognito passwordless Lambda functions"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:*"
-      },
-      {
-        Sid    = "DynamoDBVerificationCodes"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem"
-        ]
-        Resource = var.verification_table_arn
-      },
-      {
-        Sid      = "SESSendEmail"
-        Effect   = "Allow"
-        Action   = "ses:SendEmail"
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "ses:FromAddress" = var.ses_from_email
-          }
-        }
-      }
-    ]
-  })
-
-  tags = module.label.tags
-}
-
-# -----------------------------------------------------------------------------
-# Lambda: Define Auth Challenge (no dependencies)
-# -----------------------------------------------------------------------------
-
-data "archive_file" "define_auth_challenge" {
-  type        = "zip"
-  source_dir  = "${local.lambdas_dir}/define-auth-challenge"
-  output_path = "${path.module}/.terraform/define-auth-challenge.zip"
-}
-
-resource "aws_lambda_function" "define_auth_challenge" {
-  function_name    = "${module.label.id}-define-auth"
-  role             = module.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = local.lambda_runtime
-  filename         = data.archive_file.define_auth_challenge.output_path
-  source_code_hash = data.archive_file.define_auth_challenge.output_base64sha256
-  timeout          = 10
-
-  tags = module.label.tags
-}
-
-resource "aws_lambda_permission" "define_auth_challenge" {
-  statement_id  = "AllowCognitoInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.define_auth_challenge.function_name
-  principal     = "cognito-idp.amazonaws.com"
-  source_arn    = aws_cognito_user_pool.main.arn
-}
-
-# -----------------------------------------------------------------------------
-# Lambda: Create Auth Challenge (has npm dependencies)
-# -----------------------------------------------------------------------------
-
-resource "null_resource" "create_auth_challenge_deps" {
-  triggers = {
-    package_json = filemd5("${local.lambdas_dir}/create-auth-challenge/package.json")
-    source_code  = filemd5("${local.lambdas_dir}/create-auth-challenge/index.mjs")
-  }
-
-  provisioner "local-exec" {
-    command     = "npm ci --omit=dev"
-    working_dir = "${local.lambdas_dir}/create-auth-challenge"
-  }
-}
-
-data "archive_file" "create_auth_challenge" {
-  type        = "zip"
-  source_dir  = "${local.lambdas_dir}/create-auth-challenge"
-  output_path = "${path.module}/.terraform/create-auth-challenge.zip"
-
-  depends_on = [null_resource.create_auth_challenge_deps]
-}
-
-resource "aws_lambda_function" "create_auth_challenge" {
-  function_name    = "${module.label.id}-create-auth"
-  role             = module.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = local.lambda_runtime
-  filename         = data.archive_file.create_auth_challenge.output_path
-  source_code_hash = data.archive_file.create_auth_challenge.output_base64sha256
-  timeout          = 30
-
-  environment {
-    variables = {
-      VERIFICATION_TABLE   = var.verification_table_name
-      FROM_EMAIL           = var.ses_from_email
-      CODE_TTL             = tostring(var.code_ttl_seconds)
-      CODE_LENGTH          = tostring(var.code_length)
-      MAX_ATTEMPTS         = tostring(var.max_attempts)
-      ANONYMOUS_USER_EMAIL = var.anonymous_user_email
-    }
-  }
-
-  tags = module.label.tags
-}
-
-resource "aws_lambda_permission" "create_auth_challenge" {
-  statement_id  = "AllowCognitoInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.create_auth_challenge.function_name
-  principal     = "cognito-idp.amazonaws.com"
-  source_arn    = aws_cognito_user_pool.main.arn
-}
-
-# -----------------------------------------------------------------------------
-# Lambda: Verify Auth Challenge (has npm dependencies)
-# -----------------------------------------------------------------------------
-
-resource "null_resource" "verify_auth_challenge_deps" {
-  triggers = {
-    package_json = filemd5("${local.lambdas_dir}/verify-auth-challenge/package.json")
-    source_code  = filemd5("${local.lambdas_dir}/verify-auth-challenge/index.mjs")
-  }
-
-  provisioner "local-exec" {
-    command     = "npm ci --omit=dev"
-    working_dir = "${local.lambdas_dir}/verify-auth-challenge"
-  }
-}
-
-data "archive_file" "verify_auth_challenge" {
-  type        = "zip"
-  source_dir  = "${local.lambdas_dir}/verify-auth-challenge"
-  output_path = "${path.module}/.terraform/verify-auth-challenge.zip"
-
-  depends_on = [null_resource.verify_auth_challenge_deps]
-}
-
-resource "aws_lambda_function" "verify_auth_challenge" {
-  function_name    = "${module.label.id}-verify-auth"
-  role             = module.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = local.lambda_runtime
-  filename         = data.archive_file.verify_auth_challenge.output_path
-  source_code_hash = data.archive_file.verify_auth_challenge.output_base64sha256
-  timeout          = 10
-
-  environment {
-    variables = {
-      VERIFICATION_TABLE   = var.verification_table_name
-      MAX_ATTEMPTS         = tostring(var.max_attempts)
-      ANONYMOUS_USER_EMAIL = var.anonymous_user_email
-    }
-  }
-
-  tags = module.label.tags
-}
-
-resource "aws_lambda_permission" "verify_auth_challenge" {
-  statement_id  = "AllowCognitoInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.verify_auth_challenge.function_name
-  principal     = "cognito-idp.amazonaws.com"
-  source_arn    = aws_cognito_user_pool.main.arn
-}
-
-# -----------------------------------------------------------------------------
-# Lambda: Pre Sign Up (no dependencies)
-# -----------------------------------------------------------------------------
-
-data "archive_file" "pre_sign_up" {
-  type        = "zip"
-  source_dir  = "${local.lambdas_dir}/pre-sign-up"
-  output_path = "${path.module}/.terraform/pre-sign-up.zip"
-}
-
-resource "aws_lambda_function" "pre_sign_up" {
-  function_name    = "${module.label.id}-pre-signup"
-  role             = module.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = local.lambda_runtime
-  filename         = data.archive_file.pre_sign_up.output_path
-  source_code_hash = data.archive_file.pre_sign_up.output_base64sha256
-  timeout          = 10
-
-  environment {
-    variables = {
-      ANONYMOUS_USER_EMAIL = var.anonymous_user_email
-    }
-  }
-
-  tags = module.label.tags
-}
-
-resource "aws_lambda_permission" "pre_sign_up" {
-  statement_id  = "AllowCognitoInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.pre_sign_up.function_name
-  principal     = "cognito-idp.amazonaws.com"
-  source_arn    = aws_cognito_user_pool.main.arn
-}
 
 # -----------------------------------------------------------------------------
 # Cognito User Pool
@@ -318,6 +50,18 @@ resource "aws_cognito_user_pool" "main" {
   # Use email as username
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
+
+  # User Pool Tier - ESSENTIALS required for native EMAIL_OTP
+  user_pool_tier = var.user_pool_tier
+
+  # Sign-in policy for native EMAIL_OTP (requires ESSENTIALS tier)
+  # Note: PASSWORD must always be included per Cognito requirements
+  dynamic "sign_in_policy" {
+    for_each = var.enable_user_auth_email_otp ? [1] : []
+    content {
+      allowed_first_auth_factors = ["PASSWORD", "EMAIL_OTP"]
+    }
+  }
 
   # Password policy (minimal since we use passwordless)
   password_policy {
@@ -341,13 +85,8 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
-  # Lambda triggers for custom auth
-  lambda_config {
-    define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
-    create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
-    verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
-    pre_sign_up                    = aws_lambda_function.pre_sign_up.arn
-  }
+  # No Lambda triggers - native EMAIL_OTP handles everything
+  # Users are created via admin_create_user with email_verified=true
 
   # Account recovery via email
   account_recovery_setting {
@@ -357,7 +96,57 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
+  # Email configuration - use SES if configured, otherwise Cognito default
+  dynamic "email_configuration" {
+    for_each = var.ses_email_identity != "" ? [1] : []
+    content {
+      email_sending_account  = "DEVELOPER"
+      source_arn             = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
+      from_email_address     = var.ses_from_email != "" ? var.ses_from_email : "no-reply@${var.ses_email_identity}"
+      reply_to_email_address = var.ses_from_email != "" ? var.ses_from_email : "no-reply@${var.ses_email_identity}"
+    }
+  }
+
   tags = module.label.tags
+}
+
+# -----------------------------------------------------------------------------
+# SES Identity Policy for Cognito
+# -----------------------------------------------------------------------------
+# When using EmailSendingAccount = "DEVELOPER", SES requires an explicit
+# identity policy granting Cognito permission to send emails.
+
+resource "aws_ses_identity_policy" "cognito_sending" {
+  count = var.ses_email_identity != "" ? 1 : 0
+
+  identity = var.ses_email_identity
+  name     = "${module.label.id}-cognito-sending"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowCognitoToSendEmails"
+        Effect = "Allow"
+        Principal = {
+          Service = "cognito-idp.amazonaws.com"
+        }
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+          ArnLike = {
+            "aws:SourceArn" = aws_cognito_user_pool.main.arn
+          }
+        }
+      }
+    ]
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -368,11 +157,11 @@ resource "aws_cognito_user_pool_client" "main" {
   name         = "${module.label.id}-client"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  # Auth flows - enable custom auth for passwordless
+  # Auth flows - USER_AUTH enables native EMAIL_OTP
+  # ALLOW_ADMIN_USER_PASSWORD_AUTH for backend admin_create_user
   explicit_auth_flows = [
-    "ALLOW_CUSTOM_AUTH",
+    "ALLOW_USER_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_SRP_AUTH"
   ]
 
   # Token validity
@@ -395,21 +184,6 @@ resource "aws_cognito_user_pool_client" "main" {
 }
 
 # -----------------------------------------------------------------------------
-# Anonymous User Support (Simple Approach)
-# -----------------------------------------------------------------------------
-# Instead of complex Identity Pool + Token Exchange, we use a single shared
-# anonymous User Pool user. All anonymous visitors authenticate as this user.
-#
-# How it works:
-# 1. One User Pool user exists: anonymous@guest.local (1 MAU cost)
-# 2. Custom auth Lambdas auto-succeed for this email (no actual email sent)
-# 3. Frontend authenticates all anonymous visitors as this shared user
-# 4. JWT claims: email=anonymous@guest.local, email_verified=false
-# 5. Tools check email_verified claim: false=inquiry only, true=can book
-#
-# The anonymous user email is configurable via var.anonymous_user_email
-
-# -----------------------------------------------------------------------------
 # Cognito Identity Pool (for IAM-based auth)
 # -----------------------------------------------------------------------------
 # Provides temporary AWS credentials to anonymous users for SigV4 signing.
@@ -424,7 +198,7 @@ resource "aws_cognito_user_pool_client" "main" {
 resource "aws_cognito_identity_pool" "main" {
   identity_pool_name               = "${module.label.id}-identity"
   allow_unauthenticated_identities = true
-  allow_classic_flow               = true  # Required for full IAM role permissions (no session policy restrictions)
+  allow_classic_flow               = true # Required for full IAM role permissions (no session policy restrictions)
 
   # Link to User Pool for authenticated users (future use)
   cognito_identity_providers {

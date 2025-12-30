@@ -20,15 +20,27 @@ def _load_system_prompt() -> str:
     return prompt_path.read_text()
 
 
-def create_booking_agent(tools: list[Any] | None = None) -> Agent:
+def create_booking_agent(
+    tools: list[Any] | None = None,
+    session_manager: Any | None = None,
+    callback_handler: Any | None = None,
+) -> Agent:
     """Create and configure the Quesada Apartment booking agent.
 
     Args:
         tools: List of tools to provide to the agent. If None, uses ALL_TOOLS.
+        session_manager: Optional session manager for conversation persistence.
+                        When provided, the agent will restore and save conversation
+                        history using the session manager's storage backend (e.g., S3).
+        callback_handler: Optional callback for streaming events. Used with sync
+                         agent() call to stream responses while ensuring session
+                         persistence.
 
     Returns:
-        Configured Agent instance
+        Configured Agent instance with optional session persistence.
     """
+    # Configure conversation manager for context window management
+    # This handles trimming when messages exceed the model's context window
     conversation_manager = SlidingWindowConversationManager(
         window_size=40,
         should_truncate_results=True,
@@ -45,11 +57,15 @@ def create_booking_agent(tools: list[Any] | None = None) -> Agent:
     # Use provided tools or default to ALL_TOOLS
     agent_tools = tools if tools is not None else ALL_TOOLS
 
+    # Build agent with optional session manager for persistence
+    # callback_handler enables streaming via sync agent() call
     agent = Agent(
         model=bedrock_model,
         tools=agent_tools,
         system_prompt=_load_system_prompt(),
         conversation_manager=conversation_manager,
+        session_manager=session_manager,  # Enables conversation history persistence
+        callback_handler=callback_handler,  # Enables streaming with sync call
     )
 
     return agent

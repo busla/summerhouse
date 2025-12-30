@@ -37,7 +37,11 @@ module "label" {
 }
 
 locals {
-  s3_origin_id = "${module.label.id}-s3-origin"
+  s3_origin_id  = "${module.label.id}-s3-origin"
+  api_origin_id = "${module.label.id}-api-origin"
+
+  # Parse API Gateway domain from URL (e.g., "abc123.execute-api.eu-west-1.amazonaws.com")
+  api_gateway_domain = var.api_gateway_url != null ? replace(var.api_gateway_url, "/^https?:\\/\\//", "") : null
 }
 
 data "aws_region" "current" {}
@@ -128,13 +132,26 @@ module "cloudfront" {
     }
   }
 
-  # S3 Origin
-  origin = {
-    s3_origin = {
-      domain_name              = module.s3_bucket.s3_bucket_bucket_regional_domain_name
-      origin_access_control_key = "s3_oac"
-    }
-  }
+  # Origins: S3 for static files, optionally API Gateway for /api/*
+  origin = merge(
+    {
+      s3_origin = {
+        domain_name               = module.s3_bucket.s3_bucket_bucket_regional_domain_name
+        origin_access_control_key = "s3_oac"
+      }
+    },
+    var.api_gateway_url != null ? {
+      api_origin = {
+        domain_name = local.api_gateway_domain
+        custom_origin_config = {
+          http_port              = 80
+          https_port             = 443
+          origin_protocol_policy = "https-only"
+          origin_ssl_protocols   = ["TLSv1.2"]
+        }
+      }
+    } : {}
+  )
 
   # Default cache behavior
   default_cache_behavior = {
@@ -155,26 +172,51 @@ module "cloudfront" {
     max_ttl     = 86400 # 24 hours
   }
 
-  # Cache behavior for static assets (longer TTL)
-  ordered_cache_behavior = [
-    {
-      path_pattern           = "_next/static/*"
-      target_origin_id       = "s3_origin"
-      viewer_protocol_policy = "redirect-to-https"
+  # Cache behaviors: API Gateway (no cache) + static assets (long cache)
+  ordered_cache_behavior = concat(
+    # API Gateway behavior (if configured) - must come before S3 behaviors
+    var.api_gateway_url != null ? [
+      {
+        path_pattern           = var.api_path_pattern
+        target_origin_id       = "api_origin"
+        viewer_protocol_policy = "redirect-to-https"
 
-      allowed_methods = ["GET", "HEAD"]
-      cached_methods  = ["GET", "HEAD"]
-      compress        = true
+        allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+        cached_methods  = ["GET", "HEAD"]
+        compress        = true
 
-      use_forwarded_values = true
-      query_string         = false
-      cookies_forward      = "none"
+        # Forward all headers/cookies for API calls (no caching)
+        use_forwarded_values = true
+        query_string         = true
+        cookies_forward      = "all"
+        headers              = ["Authorization", "Origin", "Accept", "Content-Type"]
 
-      min_ttl     = 0
-      default_ttl = 31536000 # 1 year
-      max_ttl     = 31536000
-    }
-  ]
+        min_ttl     = 0
+        default_ttl = 0
+        max_ttl     = 0
+      }
+    ] : [],
+    # Static assets behavior (long cache)
+    [
+      {
+        path_pattern           = "_next/static/*"
+        target_origin_id       = "s3_origin"
+        viewer_protocol_policy = "redirect-to-https"
+
+        allowed_methods = ["GET", "HEAD"]
+        cached_methods  = ["GET", "HEAD"]
+        compress        = true
+
+        use_forwarded_values = true
+        query_string         = false
+        cookies_forward      = "none"
+
+        min_ttl     = 0
+        default_ttl = 31536000 # 1 year
+        max_ttl     = 31536000
+      }
+    ]
+  )
 
   # Error pages: Serve proper error pages with correct status codes
   # Note: With Next.js static export + trailingSlash, all routes are physical files

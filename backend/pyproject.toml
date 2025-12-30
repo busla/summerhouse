@@ -9,38 +9,38 @@ description = "Quesada Apartment Agent-First Vacation Rental Booking Platform - 
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = { text = "MIT" }
-authors = [
-    { name = "Quesada Apartment Team" }
-]
+authors = [{ name = "Quesada Apartment Team" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
-    "strands-agents>=0.1.0",
-    "strands-agents-tools>=0.1.0",
-    "bedrock-agentcore>=0.1.0",
-    "boto3>=1.35.0",
-    "pydantic>=2.0.0",
-    "email-validator>=2.0.0",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "python-dotenv>=1.0.0",
+  "strands-agents>=0.1.0",
+  "strands-agents-tools>=0.1.0",
+  "bedrock-agentcore>=0.1.0",
+  "boto3>=1.35.0",
+  "pydantic>=2.0.0",
+  "email-validator>=2.0.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "python-dotenv>=1.0.0",
+  "pyjwt>=2.8.0",
+  "mangum",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-asyncio>=0.24.0",
-    "ruff>=0.8.0",
-    "mypy>=1.13.0",
-    "boto3-stubs[dynamodb,cognito-idp,ses]>=1.35.0",
-    "moto>=5.0.0",
-    "httpx>=0.28.0",
-    "pydantic-to-typescript>=1.0.10",
+  "pytest>=8.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.8.0",
+  "mypy>=1.13.0",
+  "boto3-stubs[dynamodb,cognito-idp,ses]>=1.35.0",
+  "moto>=5.0.0",
+  "httpx>=0.28.0",
+  "pydantic-to-typescript>=1.0.10",
 ]
 
 [project.scripts]
@@ -56,20 +56,20 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "UP",     # pyupgrade
-    "ARG",    # flake8-unused-arguments
-    "SIM",    # flake8-simplify
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP",  # pyupgrade
+  "ARG", # flake8-unused-arguments
+  "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # function calls in argument defaults
-    "B904",   # raise without from inside except
+  "E501", # line too long (handled by formatter)
+  "B008", # function calls in argument defaults
+  "B904", # raise without from inside except
 ]
 
 [tool.ruff.lint.isort]
@@ -85,12 +85,7 @@ disallow_incomplete_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = [
-    "strands.*",
-    "moto.*",
-    "boto3.*",
-    "botocore.*",
-]
+module = ["strands.*", "moto.*", "boto3.*", "botocore.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -101,10 +96,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short"
 markers = [
-    "unit: marks tests as unit tests (no external dependencies)",
-    "integration: marks tests as integration tests (requires real AWS services)",
+  "unit: marks tests as unit tests (no external dependencies)",
+  "integration: marks tests as integration tests (requires real AWS services)",
 ]
 filterwarnings = [
-    # Ignore strands library internal deprecation warning (not in our codebase)
-    "ignore:BeforeModelCallEvent.*:DeprecationWarning:strands.experimental.hooks",
+  # Ignore strands library internal deprecation warning (not in our codebase)
+  "ignore:BeforeModelCallEvent.*:DeprecationWarning:strands.experimental.hooks",
 ]
