@@ -1,6 +1,7 @@
 """DynamoDB service wrapper for type-safe table operations."""
 
 import os
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 import boto3
@@ -32,6 +33,16 @@ def get_dynamodb_service(environment: str | None = None) -> "DynamoDBService":
     return _dynamodb_service_instance
 
 
+def reset_dynamodb_service() -> None:
+    """Reset the singleton instance (for testing only).
+
+    This allows tests to create a fresh DynamoDBService inside
+    a mock_aws context.
+    """
+    global _dynamodb_service_instance
+    _dynamodb_service_instance = None
+
+
 class DynamoDBService:
     """Service for DynamoDB operations with environment-aware table names."""
 
@@ -42,7 +53,10 @@ class DynamoDBService:
             environment: Environment name (dev/prod). Defaults to ENVIRONMENT env var.
         """
         self.environment = environment or os.getenv("ENVIRONMENT", "dev")
-        self.name_prefix = f"booking-{self.environment}"
+        # Allow override via DYNAMODB_TABLE_PREFIX for testing
+        self.name_prefix = os.getenv(
+            "DYNAMODB_TABLE_PREFIX", f"booking-{self.environment}"
+        )
         self._dynamodb = boto3.resource("dynamodb")
         self._client = boto3.client("dynamodb")
 
@@ -270,3 +284,186 @@ class DynamoDBService:
             key_condition = key_condition & sort_key_condition
 
         return self.query(table, key_condition, index_name=index_name)
+
+    # =========================================================================
+    # Guest-specific methods (T035)
+    # =========================================================================
+
+    def get_guest_by_email(self, email: str) -> dict[str, Any] | None:
+        """Get a guest by email address using GSI.
+
+        Args:
+            email: Guest email address
+
+        Returns:
+            Guest dict or None if not found
+        """
+        results = self.query_by_gsi(
+            table="guests",
+            index_name="email-index",
+            partition_key_name="email",
+            partition_key_value=email,
+        )
+        return results[0] if results else None
+
+    def get_guest_by_cognito_sub(self, cognito_sub: str) -> dict[str, Any] | None:
+        """Get a guest by Cognito sub using GSI.
+
+        Args:
+            cognito_sub: Cognito user sub (from ID token)
+
+        Returns:
+            Guest dict or None if not found
+        """
+        results = self.query_by_gsi(
+            table="guests",
+            index_name="cognito_sub-index",
+            partition_key_name="cognito_sub",
+            partition_key_value=cognito_sub,
+        )
+        return results[0] if results else None
+
+    def create_guest(self, guest: dict[str, Any]) -> bool:
+        """Create a new guest record.
+
+        Args:
+            guest: Guest data dict (must include guest_id)
+
+        Returns:
+            True if created successfully
+        """
+        return self.put_item(
+            table="guests",
+            item=guest,
+            condition_expression="attribute_not_exists(guest_id)",
+        )
+
+    def update_guest_cognito_sub(
+        self, guest_id: str, cognito_sub: str
+    ) -> dict[str, Any] | None:
+        """Bind a Cognito sub to an existing guest.
+
+        Used when a guest who was created before OAuth2 auth
+        logs in for the first time and needs their cognito_sub linked.
+
+        Args:
+            guest_id: Guest primary key
+            cognito_sub: Cognito user sub to bind
+
+        Returns:
+            Updated guest attributes or None if failed
+        """
+        return self.update_item(
+            table="guests",
+            key={"guest_id": guest_id},
+            update_expression="SET cognito_sub = :sub",
+            expression_attribute_values={":sub": cognito_sub},
+        )
+
+    # =========================================================================
+    # OAuth2 Session methods (T063)
+    # =========================================================================
+
+    def create_oauth2_session(
+        self, session_data: "OAuth2SessionCreate"
+    ) -> "OAuth2Session":
+        """Create an OAuth2 session for conversation-to-callback bridge.
+
+        Stores the session_id → guest_email mapping that enables user identity
+        verification during the OAuth2 callback flow.
+
+        Sessions expire after 10 minutes via DynamoDB TTL.
+
+        Args:
+            session_data: Session creation data with session_id, conversation_id, guest_email
+
+        Returns:
+            OAuth2Session model with all fields populated
+
+        Raises:
+            ClientError: If DynamoDB write fails
+        """
+        from src.models.oauth2_session import OAuth2Session, OAuth2SessionStatus
+
+        now = datetime.now(timezone.utc)
+        expires_at = int(now.timestamp()) + 600  # 10 minute TTL
+
+        session = OAuth2Session(
+            session_id=session_data.session_id,
+            conversation_id=session_data.conversation_id,
+            guest_email=session_data.guest_email,
+            status=OAuth2SessionStatus.PENDING,
+            created_at=now,
+            expires_at=expires_at,
+        )
+
+        # Store in DynamoDB
+        item = {
+            "session_id": session.session_id,
+            "conversation_id": session.conversation_id,
+            "guest_email": session.guest_email,
+            "status": session.status.value,
+            "created_at": session.created_at.isoformat(),
+            "expires_at": session.expires_at,
+        }
+
+        self.put_item(table="oauth2-sessions", item=item)
+        return session
+
+    def get_oauth2_session(self, session_id: str) -> "OAuth2Session | None":
+        """Get an OAuth2 session by session_id.
+
+        Used by the callback handler to look up guest_email for user verification.
+
+        Args:
+            session_id: Session URI from AgentCore
+
+        Returns:
+            OAuth2Session if found, None otherwise
+        """
+        from src.models.oauth2_session import OAuth2Session, OAuth2SessionStatus
+
+        item = self.get_item(table="oauth2-sessions", key={"session_id": session_id})
+        if not item:
+            return None
+
+        # Parse created_at from ISO format
+        created_at_str = item["created_at"]
+        if isinstance(created_at_str, str):
+            if created_at_str.endswith("Z"):
+                created_at_str = created_at_str[:-1] + "+00:00"
+            created_at = datetime.fromisoformat(created_at_str)
+        else:
+            created_at = datetime.now(timezone.utc)
+
+        return OAuth2Session(
+            session_id=item["session_id"],
+            conversation_id=item["conversation_id"],
+            guest_email=item["guest_email"],
+            status=OAuth2SessionStatus(item["status"]),
+            created_at=created_at,
+            expires_at=int(item["expires_at"]),
+        )
+
+    def update_oauth2_session_status(
+        self, session_id: str, status: "OAuth2SessionStatus"
+    ) -> bool:
+        """Update the status of an OAuth2 session.
+
+        Used to mark sessions as COMPLETED (successful auth) or FAILED (error/mismatch).
+
+        Args:
+            session_id: Session to update
+            status: New status (COMPLETED, FAILED, EXPIRED)
+
+        Returns:
+            True if update succeeded, False if session not found
+        """
+        result = self.update_item(
+            table="oauth2-sessions",
+            key={"session_id": session_id},
+            update_expression="SET #status = :status",
+            expression_attribute_names={"#status": "status"},
+            expression_attribute_values={":status": status.value},
+        )
+        return result is not None

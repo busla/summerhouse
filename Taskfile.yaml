@@ -18,7 +18,7 @@ tasks:
   # ============================================================================
   # Usage: task tf:<action>:<env>
   # Examples: task tf:init:dev, task tf:plan:prod, task tf:apply:dev
-  # Available actions: init, plan, apply, destroy, output
+  # Available actions: init, plan, apply, destroy, output, state
   # Environments are auto-discovered from infrastructure/environments/
 
   # Dispatcher task - routes tf:<action>:<env> to internal tasks
@@ -194,9 +194,13 @@ tasks:
     desc: "Seed database with test data (usage: task seed:<env>)"
     vars:
       ENV: "{{index .MATCH 0}}"
+      # Region defaults to eu-west-1 for dev, can be overridden per environment
+      REGION: '{{if eq (index .MATCH 0) "prod"}}eu-west-1{{else}}eu-west-1{{end}}'
     dir: backend
+    env:
+      AWS_DEFAULT_REGION: "{{.REGION}}"
     cmds:
-      - uv run python scripts/seed_data.py --env {{.ENV}}
+      - uv run python scripts/seed_data.py --env {{.ENV}} --region {{.REGION}}
 
   # ============================================================================
   # Internal Tasks (reusable templates)
@@ -258,3 +262,14 @@ tasks:
         msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
     cmds:
       - terraform output {{.EXTRA_ARGS}}
+
+  _tf:state:
+    internal: true
+    dir: "{{.TF_DIR}}"
+    env:
+      TF_DATA_DIR: "{{.ROOT_DIR}}/{{.TF_DIR}}/.terraform-{{.ENV}}"
+    preconditions:
+      - sh: test -d environments/{{.ENV}}
+        msg: "Environment '{{.ENV}}' not found. Run 'task tf:envs' to see available environments."
+    cmds:
+      - terraform state {{.EXTRA_ARGS}}

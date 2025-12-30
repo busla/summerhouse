@@ -1,0 +1,280 @@
+openapi: 3.1.0
+info:
+  title: Booking Authentication API
+  description: |
+    OAuth2 callback and authentication endpoints for the Booking platform.
+
+    This API provides:
+    - OAuth2 callback endpoint for Cognito authorization code exchange
+    - Session status endpoint for frontend polling
+
+    Authentication flows are primarily handled through agent tools.
+    These endpoints support the OAuth2 callback infrastructure.
+  version: 1.0.0
+  contact:
+    name: Booking API Support
+
+servers:
+  - url: https://api.booking.example/v1
+    description: Production server
+  - url: https://api-dev.booking.example/v1
+    description: Development server
+  - url: http://localhost:3001/api
+    description: Local development
+
+tags:
+  - name: OAuth2
+    description: OAuth2 authentication endpoints
+  - name: Session
+    description: Session management endpoints
+
+paths:
+  /auth/callback:
+    get:
+      tags:
+        - OAuth2
+      summary: OAuth2 authorization callback
+      description: |
+        Receives the OAuth2 authorization code from Cognito after user authentication.
+
+        This endpoint:
+        1. Validates the state parameter against stored OAuth2 sessions
+        2. Exchanges the authorization code for tokens via AgentCore Identity
+        3. Binds the tokens to the correct agent conversation
+        4. Redirects user back to the application
+
+        The state parameter contains the session_id used for session binding.
+        PKCE code_verifier is retrieved from the stored session.
+      operationId: oauth2Callback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: OAuth2 authorization code from Cognito
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          description: OAuth2 state parameter for session binding and CSRF protection
+          schema:
+            type: string
+            minLength: 32
+        - name: error
+          in: query
+          required: false
+          description: Error code if authorization failed
+          schema:
+            type: string
+            enum:
+              - access_denied
+              - invalid_request
+              - unauthorized_client
+              - unsupported_response_type
+              - invalid_scope
+              - server_error
+        - name: error_description
+          in: query
+          required: false
+          description: Human-readable error description
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to application after successful token exchange
+          headers:
+            Location:
+              description: |
+                Redirect URL to application.
+                - Success: /?auth=success&session_id={session_id}
+                - Error: /?auth=error&message={error_message}
+              schema:
+                type: string
+                format: uri
+        '400':
+          description: Invalid callback parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingCode:
+                  summary: Missing authorization code
+                  value:
+                    error: "invalid_request"
+                    message: "Missing required parameter: code"
+                invalidState:
+                  summary: Invalid state parameter
+                  value:
+                    error: "invalid_state"
+                    message: "State parameter does not match any active session"
+        '500':
+          description: Token exchange failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/session/{session_id}:
+    get:
+      tags:
+        - Session
+      summary: Get OAuth2 session status
+      description: |
+        Check the status of an OAuth2 authentication session.
+
+        Used by the frontend to poll for authentication completion
+        after redirecting the user to the Cognito login page.
+
+        Returns session status without exposing tokens.
+      operationId: getSessionStatus
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: OAuth2 session ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+              examples:
+                pending:
+                  summary: Authentication in progress
+                  value:
+                    session_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: "pending"
+                    created_at: "2025-12-29T10:00:00Z"
+                    expires_at: "2025-12-29T10:10:00Z"
+                completed:
+                  summary: Authentication completed
+                  value:
+                    session_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: "completed"
+                    guest_email: "guest@example.com"
+                    created_at: "2025-12-29T10:00:00Z"
+                    completed_at: "2025-12-29T10:02:30Z"
+                expired:
+                  summary: Session expired
+                  value:
+                    session_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: "expired"
+                    created_at: "2025-12-29T10:00:00Z"
+                    expires_at: "2025-12-29T10:10:00Z"
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "session_not_found"
+                message: "OAuth2 session not found or expired"
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+          examples:
+            - "invalid_request"
+            - "invalid_state"
+            - "session_not_found"
+            - "token_exchange_failed"
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+
+    SessionStatus:
+      type: object
+      required:
+        - session_id
+        - status
+        - created_at
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: OAuth2 session ID
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - expired
+            - failed
+          description: Current session status
+        guest_email:
+          type: string
+          format: email
+          description: Guest email (only present if status is completed)
+        error_message:
+          type: string
+          description: Error details (only present if status is failed)
+        created_at:
+          type: string
+          format: date-time
+          description: Session creation timestamp
+        expires_at:
+          type: string
+          format: date-time
+          description: Session expiration timestamp
+        completed_at:
+          type: string
+          format: date-time
+          description: Authentication completion timestamp (only if completed)
+
+    OAuth2TokenResponse:
+      type: object
+      description: |
+        Internal representation of OAuth2 tokens.
+        Never exposed via API - stored encrypted in DynamoDB.
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: OAuth2 access token (JWT)
+        id_token:
+          type: string
+          description: OpenID Connect ID token (JWT)
+        refresh_token:
+          type: string
+          description: OAuth2 refresh token
+        token_type:
+          type: string
+          enum: [Bearer]
+          description: Token type
+        expires_in:
+          type: integer
+          description: Token validity in seconds
+
+  securitySchemes:
+    cognito:
+      type: oauth2
+      description: Cognito OAuth2 with PKCE
+      flows:
+        authorizationCode:
+          authorizationUrl: https://{domain}.auth.{region}.amazoncognito.com/oauth2/authorize
+          tokenUrl: https://{domain}.auth.{region}.amazoncognito.com/oauth2/token
+          scopes:
+            openid: OpenID Connect scope
+            email: Access to email address
+            profile: Access to profile information

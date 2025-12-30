@@ -12,6 +12,10 @@ class Guest(BaseModel):
 
     guest_id: str = Field(..., description="Unique guest ID (UUID)")
     email: EmailStr = Field(..., description="Guest email (verified)")
+    cognito_sub: str | None = Field(
+        default=None,
+        description="Cognito User Pool subject identifier for OAuth2 binding",
+    )
     name: str | None = Field(default=None, description="Full name")
     phone: str | None = Field(default=None, description="Phone number")
     preferred_language: str = Field(

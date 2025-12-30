@@ -70,7 +70,8 @@ class TestModifyReservation:
             new_check_out="2025-07-23",
         )
 
-        assert result["status"] == "error"
+        # ToolError format uses "success" instead of "status"
+        assert result["success"] is False
         assert "not found" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")
@@ -98,8 +99,10 @@ class TestModifyReservation:
             new_check_out="2025-07-23",
         )
 
-        assert result["status"] == "error"
-        assert "cannot" in result["message"].lower() or "cancelled" in result["message"].lower()
+        # ToolError format uses "success" instead of "status"
+        assert result["success"] is False
+        # ToolError.UNAUTHORIZED message is "Guest not authorized for this action"
+        assert "not authorized" in result["message"].lower() or "cancelled" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")
     @patch("src.tools.reservations._check_dates_available")
@@ -130,7 +133,8 @@ class TestModifyReservation:
             new_check_out="2025-08-08",
         )
 
-        assert result["status"] == "error"
+        # ToolError format uses "success" instead of "status"
+        assert result["success"] is False
         assert "unavailable" in result["message"].lower() or "available" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")

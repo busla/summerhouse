@@ -52,11 +52,6 @@ output "cognito_issuer_url" {
   value       = module.cognito.issuer_url
 }
 
-output "cognito_anonymous_user_email" {
-  description = "Email for the shared anonymous user (empty if anonymous access is disabled)"
-  value       = module.cognito.anonymous_user_email
-}
-
 output "cognito_identity_pool_id" {
   description = "Cognito Identity Pool ID for IAM-based auth"
   value       = module.cognito.identity_pool_id
@@ -117,4 +112,26 @@ output "s3_bucket_name" {
 output "frontend_deploy_command" {
   description = "Command to deploy frontend to S3"
   value       = module.static_website.deploy_command
+}
+
+# Gateway-v2 Outputs (OAuth2 callback API)
+output "api_gateway_url" {
+  description = "API Gateway invoke URL for OAuth2 callbacks"
+  value       = module.gateway_v2.api_gateway_url
+}
+
+output "oauth2_callback_url" {
+  description = "Full OAuth2 callback URL for AgentCore Identity configuration"
+  value       = module.gateway_v2.oauth2_callback_url
+}
+
+output "api_lambda_function_name" {
+  description = "Lambda function name for API Gateway"
+  value       = module.gateway_v2.lambda_function_name
+}
+
+# AgentCore Identity Outputs
+output "agentcore_workload_identity_names" {
+  description = "Workload identity provider names for AgentCore"
+  value       = try(module.agentcore.identity.workload_identity_names, {})
 }

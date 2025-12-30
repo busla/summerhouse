@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, Request
+from mangum import Mangum
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.agent import get_agent, reset_agent
+from src.api.auth import router as auth_router
 
 app = FastAPI(
     title="Quesada Apartment Booking Agent",
@@ -35,6 +37,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include OAuth2 auth router
+app.include_router(auth_router)
 
 
 @app.get("/ping")
@@ -216,6 +221,10 @@ async def reset() -> JSONResponse:
         "status": "ok",
         "message": "Agent conversation reset",
     })
+
+
+# Lambda handler - Mangum wraps FastAPI for AWS Lambda + API Gateway
+handler = Mangum(app, lifespan="off")
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8080, reload: bool = True) -> None:

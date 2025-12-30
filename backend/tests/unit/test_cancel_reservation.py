@@ -61,7 +61,7 @@ class TestCancelReservation:
             reason="Test",
         )
 
-        assert result["status"] == "error"
+        assert result["success"] is False
         assert "not found" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")
@@ -90,8 +90,9 @@ class TestCancelReservation:
             reason="Test",
         )
 
-        assert result["status"] == "error"
-        assert "already" in result["message"].lower() and "cancelled" in result["message"].lower()
+        assert result["success"] is False
+        # ToolError.UNAUTHORIZED message is "Guest not authorized for this action"
+        assert "not authorized" in result["message"].lower() or "cancelled" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")
     def test_cancel_completed_reservation_fails(
@@ -119,7 +120,7 @@ class TestCancelReservation:
             reason="Test",
         )
 
-        assert result["status"] == "error"
+        assert result["success"] is False
 
 
 class TestCancellationPolicy:

@@ -18,6 +18,7 @@ Or via Taskfile:
 """
 
 import argparse
+import os
 import sys
 from datetime import date
 from decimal import Decimal
@@ -27,6 +28,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import boto3  # noqa: E402
+
+# Global region setting (set by main() from args)
+_AWS_REGION: str | None = None
+
+
+def get_dynamodb_resource():
+    """Get DynamoDB resource with configured region."""
+    if _AWS_REGION:
+        return boto3.resource("dynamodb", region_name=_AWS_REGION)
+    return boto3.resource("dynamodb")
 
 
 def get_table_name(env: str, table: str) -> str:
@@ -158,8 +169,8 @@ def create_seasonal_pricing(env: str) -> list[dict]:
         },
     ]
 
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(get_table_name(env, "pricing"))
+    dynamodb = get_dynamodb_resource()
+    table = dynamodb.Table(get_table_name(env, "data-pricing"))
 
     print(f"Seeding pricing table: {table.name}")
 
@@ -187,8 +198,8 @@ def create_availability(env: str, years: int = 2) -> int:
     """
     from datetime import timedelta
 
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(get_table_name(env, "availability"))
+    dynamodb = get_dynamodb_resource()
+    table = dynamodb.Table(get_table_name(env, "data-availability"))
 
     print(f"Seeding availability table: {table.name}")
     print(f"  Creating {years} years of availability records...")
@@ -304,8 +315,8 @@ def create_sample_guests(env: str) -> list[dict]:
         },
     ]
 
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(get_table_name(env, "guests"))
+    dynamodb = get_dynamodb_resource()
+    table = dynamodb.Table(get_table_name(env, "data-guests"))
 
     print(f"Seeding guests table: {table.name}")
 
@@ -323,7 +334,7 @@ def clear_table(env: str, table_name: str) -> int:
     Returns:
         Number of items deleted
     """
-    dynamodb = boto3.resource("dynamodb")
+    dynamodb = get_dynamodb_resource()
     table = dynamodb.Table(get_table_name(env, table_name))
 
     # Scan and delete all items
@@ -352,12 +363,19 @@ def clear_table(env: str, table_name: str) -> int:
 
 def main() -> int:
     """Run the seed script."""
+    global _AWS_REGION
+
     parser = argparse.ArgumentParser(description="Seed development database with test data")
     parser.add_argument(
         "--env",
         choices=["dev", "staging", "prod"],
         default="dev",
         help="Target environment (default: dev)",
+    )
+    parser.add_argument(
+        "--region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "eu-west-1"),
+        help="AWS region (default: eu-west-1 or AWS_DEFAULT_REGION env var)",
     )
     parser.add_argument(
         "--pricing-only",
@@ -377,6 +395,9 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # Set global region for boto3 calls
+    _AWS_REGION = args.region
+
     # Safety check for production
     if args.env == "prod":
         confirm = input("⚠️  WARNING: You are about to modify PRODUCTION data. Type 'yes' to continue: ")
@@ -384,12 +405,16 @@ def main() -> int:
             print("Aborted.")
             return 1
 
-    print(f"\n🌱 Seeding {args.env} environment\n")
+    print(f"\n🌱 Seeding {args.env} environment (region: {args.region})\n")
 
     # Optionally clear existing data
     if args.clear_first:
         print("Clearing existing data...")
-        tables = ["pricing"] if args.pricing_only else ["pricing", "availability", "guests"]
+        tables = (
+            ["data-pricing"]
+            if args.pricing_only
+            else ["data-pricing", "data-availability", "data-guests"]
+        )
         for table in tables:
             try:
                 count = clear_table(args.env, table)

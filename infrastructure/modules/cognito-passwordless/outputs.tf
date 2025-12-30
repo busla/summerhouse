@@ -1,4 +1,9 @@
 # Cognito Passwordless Module - Outputs
+# Outputs for native USER_AUTH with EMAIL_OTP configuration
+
+# -----------------------------------------------------------------------------
+# User Pool Outputs
+# -----------------------------------------------------------------------------
 
 output "user_pool_id" {
   description = "Cognito User Pool ID"
@@ -28,15 +33,6 @@ output "discovery_url" {
 output "issuer_url" {
   description = "JWT issuer URL"
   value       = "https://cognito-idp.${data.aws_region.current.id}.amazonaws.com/${aws_cognito_user_pool.main.id}"
-}
-
-# Note: verification_table_name and verification_table_arn are now inputs from dynamodb module
-# Note: data "aws_region" "current" is defined in main.tf
-
-# Anonymous user support
-output "anonymous_user_email" {
-  description = "Email address for the shared anonymous user (empty if not configured)"
-  value       = var.anonymous_user_email
 }
 
 # -----------------------------------------------------------------------------

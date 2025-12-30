@@ -107,6 +107,64 @@ module "dynamodb" {
 }
 
 # -----------------------------------------------------------------------------
+# S3 Bucket for Agent Session Storage (Strands S3SessionManager)
+# -----------------------------------------------------------------------------
+# Stores conversation history for multi-turn agent conversations.
+# Each session_id from the frontend maps to a unique conversation state in S3.
+# Must be defined before AgentCore module since it references the bucket name.
+
+module "agent_sessions_bucket" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "~> 4.1"
+
+  bucket = "${module.label.id}-agent-sessions"
+
+  # Block all public access
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+
+  # Enable versioning for recovery
+  versioning = {
+    enabled = true
+  }
+
+  # Server-side encryption with S3-managed keys
+  server_side_encryption_configuration = {
+    rule = {
+      apply_server_side_encryption_by_default = {
+        sse_algorithm = "AES256"
+      }
+    }
+  }
+
+  # Lifecycle rule to clean up old sessions (sessions older than 30 days)
+  lifecycle_rule = [
+    {
+      id      = "cleanup-old-sessions"
+      enabled = true
+
+      filter = {
+        prefix = "agent-sessions/"
+      }
+
+      expiration = {
+        days = 30
+      }
+
+      # Clean up incomplete multipart uploads
+      abort_incomplete_multipart_upload_days = 1
+    }
+  ]
+
+  # Force destroy for easier cleanup in dev environments
+  force_destroy = var.environment == "dev"
+
+  tags = module.label.tags
+}
+
+# -----------------------------------------------------------------------------
 # AgentCore Runtime
 # -----------------------------------------------------------------------------
 
@@ -153,8 +211,26 @@ module "agentcore" {
         # Application environment - used by DynamoDB service for table names
         ENVIRONMENT = var.environment
 
+        # AWS region for boto3 clients (DynamoDB, S3, etc.)
+        # AgentCore doesn't inject AWS_REGION like Lambda, so we must set it explicitly
+        AWS_DEFAULT_REGION = data.aws_region.current.name
+
+        # DynamoDB table prefix - matches CloudPosse label pattern from dynamodb module
+        # Format: namespace-environment-name (where name = "data" in dynamodb module)
+        DYNAMODB_TABLE_PREFIX = module.dynamodb.table_prefix
+
+        # Session management - S3 bucket for conversation history persistence
+        # Used by Strands S3SessionManager in agent_app.py
+        SESSION_BUCKET = module.agent_sessions_bucket.s3_bucket_id
+        SESSION_PREFIX = "agent-sessions/"
+
         # Logging
         LOG_LEVEL = var.environment == "prod" ? "INFO" : "DEBUG"
+
+        # Cognito configuration for EMAIL_OTP authentication
+        # Used by auth tools (initiate_cognito_login, verify_cognito_otp)
+        COGNITO_USER_POOL_ID = module.cognito.user_pool_id
+        COGNITO_CLIENT_ID    = module.cognito.client_id
       }
 
       # IAM authorization - Uses SigV4 signing
@@ -202,6 +278,19 @@ module "agentcore" {
   # No gateway - frontend calls runtime directly via API Gateway or AppSync
   gateway = null
 
+  # Identity configuration for OAuth2 workload tokens
+  # This creates a workload identity provider that enables @requires_access_token decorator
+  identity = {
+    # Workload provider for agent-to-user OAuth2 flows
+    # The oauth2_return_urls is where AgentCore redirects after completing OAuth2 code exchange
+    workload_providers = [
+      {
+        name               = "cognito"
+        oauth2_return_urls = [module.gateway_v2.oauth2_callback_url]
+      }
+    ]
+  }
+
   # Additional IAM permissions for DynamoDB access
   # The runtime IAM role needs access to our booking tables
   depends_on = [module.dynamodb]
@@ -247,6 +336,75 @@ resource "aws_iam_role_policy_attachment" "agentcore_dynamodb" {
   policy_arn = aws_iam_policy.agentcore_dynamodb.arn
 }
 
+# IAM policy for AgentCore Runtime to access session storage bucket
+resource "aws_iam_policy" "agentcore_sessions_s3" {
+  name        = "${module.label.id}-agentcore-sessions-s3"
+  description = "Allow AgentCore Runtime to read/write session data to S3"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "S3SessionBucketAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${module.agent_sessions_bucket.s3_bucket_arn}/*"
+      },
+      {
+        Sid    = "S3SessionBucketList"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = module.agent_sessions_bucket.s3_bucket_arn
+      }
+    ]
+  })
+
+  tags = module.label.tags
+}
+
+# Attach S3 session policy to AgentCore Runtime IAM role
+resource "aws_iam_role_policy_attachment" "agentcore_sessions_s3" {
+  role       = module.agentcore.runtime["booking"].role_name
+  policy_arn = aws_iam_policy.agentcore_sessions_s3.arn
+}
+
+# IAM policy for AgentCore Runtime to manage Cognito users for passwordless auth
+# Required for auto-creating users when they don't exist (admin_create_user)
+resource "aws_iam_policy" "agentcore_cognito" {
+  name        = "${module.label.id}-agentcore-cognito"
+  description = "Allow AgentCore Runtime to manage Cognito users for passwordless authentication"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CognitoAdminUserManagement"
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminUpdateUserAttributes"
+        ]
+        Resource = module.cognito.user_pool_arn
+      }
+    ]
+  })
+
+  tags = module.label.tags
+}
+
+# Attach Cognito policy to AgentCore Runtime IAM role
+resource "aws_iam_role_policy_attachment" "agentcore_cognito" {
+  role       = module.agentcore.runtime["booking"].role_name
+  policy_arn = aws_iam_policy.agentcore_cognito.arn
+}
+
 # -----------------------------------------------------------------------------
 # Cognito Passwordless Authentication
 # -----------------------------------------------------------------------------
@@ -257,20 +415,17 @@ module "cognito" {
   # Pass CloudPosse context
   context = module.label.context
 
-  # SES Configuration
-  ses_from_email = var.ses_from_email
+  # Cognito tier and native EMAIL_OTP configuration
+  # Set user_pool_tier = "ESSENTIALS" and enable_user_auth_email_otp = true
+  # to use Cognito's native USER_AUTH flow with EMAIL_OTP
+  # Note: Native EMAIL_OTP eliminates need for custom Lambda triggers
+  user_pool_tier             = var.cognito_user_pool_tier
+  enable_user_auth_email_otp = var.enable_cognito_email_otp
 
-  # Use verification_codes table from DynamoDB module
-  verification_table_name = module.dynamodb.verification_codes_table_name
-  verification_table_arn  = module.dynamodb.verification_codes_table_arn
-
-  # Verification settings
-  code_ttl_seconds = 300 # 5 minutes
-  max_attempts     = 3
-  code_length      = 6
-
-  # Anonymous user support - shared user for unauthenticated visitors
-  anonymous_user_email = var.anonymous_user_email
+  # SES email configuration (optional)
+  # When set, Cognito uses your SES identity instead of default email service
+  ses_email_identity = var.ses_email_identity
+  ses_from_email     = var.ses_from_email
 }
 
 
@@ -342,4 +497,33 @@ module "static_website" {
   waf_whitelisted_ips = [
     { ip = "157.157.199.250/32", description = "Hlíð" }
   ]
+
+  # API Gateway origin for /api/* routes (unified domain for frontend + API)
+  api_gateway_url = module.gateway_v2.api_gateway_url
+}
+
+# -----------------------------------------------------------------------------
+# Gateway-v2: FastAPI Lambda + API Gateway HTTP API
+# -----------------------------------------------------------------------------
+# Provides OAuth2 callback endpoint for AgentCore Identity flows
+
+module "gateway_v2" {
+  source = "./modules/gateway-v2"
+
+  # Pass CloudPosse context
+  context = module.label.context
+
+  # Backend source for Lambda build
+  backend_source_dir = "${path.module}/../backend"
+
+  # DynamoDB OAuth2 sessions table (for session_id → guest_email correlation)
+  oauth2_sessions_table_name = module.dynamodb.oauth2_sessions_table_name
+  oauth2_sessions_table_arn  = module.dynamodb.oauth2_sessions_table_arn
+
+  # Cognito configuration (for JWT validation in callback)
+  cognito_user_pool_id = module.cognito.user_pool_id
+  cognito_client_id    = module.cognito.client_id
+
+  # Frontend URL for post-auth redirect
+  frontend_url = module.static_website.website_url
 }

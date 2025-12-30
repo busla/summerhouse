@@ -65,9 +65,9 @@ class TestGetReservation:
         # Call the tool
         result = get_reservation("RES-2025-INVALID")
 
-        # Verify
-        assert result["status"] == "error"
-        assert result["code"] == "NOT_FOUND"
+        # Verify - ToolError format uses "success" and "error_code"
+        assert result["success"] is False
+        assert result["error_code"] == "ERR_006"  # RESERVATION_NOT_FOUND
         assert "not found" in result["message"].lower()
 
     @patch("src.tools.reservations._get_db")
