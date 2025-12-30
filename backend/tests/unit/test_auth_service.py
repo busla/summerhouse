@@ -289,7 +289,7 @@ class TestVerifyOtp:
         # Then: Should return INVALID_OTP error
         assert isinstance(result, AuthResult)
         assert result.success is False
-        assert result.error_code == ErrorCode.INVALID_OTP.value
+        assert result.error_code == "INVALID_OTP"  # Contract-defined code
 
     def test_verify_otp_expired(
         self,
@@ -319,7 +319,7 @@ class TestVerifyOtp:
         # Then: Should return OTP_EXPIRED error
         assert isinstance(result, AuthResult)
         assert result.success is False
-        assert result.error_code == ErrorCode.OTP_EXPIRED.value
+        assert result.error_code == "OTP_EXPIRED"  # Contract-defined code
 
     def test_verify_otp_max_attempts_exceeded(
         self,
@@ -349,7 +349,7 @@ class TestVerifyOtp:
         # Then: Should return MAX_ATTEMPTS_EXCEEDED
         assert isinstance(result, AuthResult)
         assert result.success is False
-        assert result.error_code == ErrorCode.MAX_ATTEMPTS_EXCEEDED.value
+        assert result.error_code == "MAX_ATTEMPTS_EXCEEDED"  # Contract-defined code
 
     def test_verify_otp_increments_attempts(
         self,

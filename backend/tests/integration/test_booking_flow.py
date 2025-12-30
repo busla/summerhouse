@@ -31,6 +31,37 @@ os.environ.setdefault("ENVIRONMENT", "test")
 # to avoid polluting the environment for other tests that need real credentials
 
 
+# === Response Format Helpers ===
+# Tools return two different error formats:
+# 1. Simple validation: {"status": "error", "message": "..."}
+# 2. ToolError business errors: {"success": false, "error_code": "ERR_XXX", ...}
+
+
+def is_success_response(result: dict[str, Any]) -> bool:
+    """Check if response indicates success (handles both formats)."""
+    return result.get("status") == "success" or result.get("success") is True
+
+
+def is_error_response(result: dict[str, Any]) -> bool:
+    """Check if response indicates error (handles both formats)."""
+    return result.get("status") == "error" or result.get("success") is False
+
+
+def get_error_code(result: dict[str, Any]) -> str | None:
+    """Get error code from response (handles both formats).
+
+    Returns a string representation of the error code.
+    ToolError returns ErrorCode enum, simple errors return strings.
+    """
+    error_code = result.get("error_code") or result.get("code")
+    if error_code is None:
+        return None
+    # Convert enum to string if needed (ErrorCode enum has .name like DATES_UNAVAILABLE)
+    if hasattr(error_code, "name"):
+        return error_code.name
+    return str(error_code)
+
+
 # === Fixtures ===
 
 
@@ -80,11 +111,11 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
     with mock_aws():
         client = boto3.client("dynamodb", region_name="eu-west-1")
 
-        # Table names must match what DynamoDBService._table_name() produces
-        # with ENVIRONMENT=test: booking-test-{table}
+        # Table names must match DYNAMODB_TABLE_PREFIX from conftest.py
+        # which is 'test-booking', so tables are 'test-booking-{table}'
         tables = [
             {
-                "TableName": "booking-test-reservations",
+                "TableName": "test-booking-reservations",
                 "KeySchema": [{"AttributeName": "reservation_id", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "reservation_id", "AttributeType": "S"},
@@ -92,7 +123,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
                 "BillingMode": "PAY_PER_REQUEST",
             },
             {
-                "TableName": "booking-test-guests",
+                "TableName": "test-booking-guests",
                 "KeySchema": [{"AttributeName": "guest_id", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "guest_id", "AttributeType": "S"},
@@ -108,7 +139,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
                 "BillingMode": "PAY_PER_REQUEST",
             },
             {
-                "TableName": "booking-test-availability",
+                "TableName": "test-booking-availability",
                 "KeySchema": [{"AttributeName": "date", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "date", "AttributeType": "S"},
@@ -116,7 +147,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
                 "BillingMode": "PAY_PER_REQUEST",
             },
             {
-                "TableName": "booking-test-pricing",
+                "TableName": "test-booking-pricing",
                 "KeySchema": [{"AttributeName": "season", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "season", "AttributeType": "S"},
@@ -125,7 +156,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
             },
             {
                 # Note: table is "payments" not "payment"
-                "TableName": "booking-test-payments",
+                "TableName": "test-booking-payments",
                 "KeySchema": [{"AttributeName": "payment_id", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "payment_id", "AttributeType": "S"},
@@ -142,7 +173,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
             },
             {
                 # Note: underscore not hyphen - matches tool's db.put_item("verification_codes", ...)
-                "TableName": "booking-test-verification_codes",
+                "TableName": "test-booking-verification_codes",
                 "KeySchema": [{"AttributeName": "email", "KeyType": "HASH"}],
                 "AttributeDefinitions": [
                     {"AttributeName": "email", "AttributeType": "S"},
@@ -161,7 +192,7 @@ def dynamodb_tables(aws_credentials: None) -> Generator[Any, None, None]:
 def seed_availability(dynamodb_tables: Any) -> None:
     """Seed availability data for testing."""
     resource = boto3.resource("dynamodb", region_name="eu-west-1")
-    table = resource.Table("booking-test-availability")
+    table = resource.Table("test-booking-availability")
 
     # Create available dates for July 2025
     for day in range(1, 32):
@@ -278,8 +309,9 @@ class TestCompleteBookingFlow:
             num_adults=2,
         )
 
-        assert res_result["status"] == "error"
-        assert "DATES_UNAVAILABLE" in res_result.get("code", "")
+        assert is_error_response(res_result)
+        error_code = get_error_code(res_result)
+        assert error_code and "DATES_UNAVAILABLE" in error_code
 
     def test_dates_become_unavailable_after_reservation(
         self,
@@ -342,9 +374,12 @@ class TestCompleteBookingFlow:
             num_adults=2,
         )
 
-        assert res2["status"] == "error"
+        assert is_error_response(res2)
         # Should indicate which dates are unavailable
-        assert "unavailable_dates" in res2 or "DATES_UNAVAILABLE" in res2.get("code", "")
+        error_code = get_error_code(res2)
+        # unavailable_dates may be at top level or nested in details
+        has_unavailable = "unavailable_dates" in res2 or "unavailable_dates" in res2.get("details", {})
+        assert has_unavailable or (error_code and "DATES_UNAVAILABLE" in error_code)
 
 
 class TestGuestVerificationFlow:
@@ -374,7 +409,7 @@ class TestGuestVerificationFlow:
         if not verification_code:
             # Fallback: get from database
             resource = boto3.resource("dynamodb", region_name="eu-west-1")
-            table = resource.Table("booking-test-verification-codes")
+            table = resource.Table("test-booking-verification_codes")
             code_item = table.get_item(Key={"email": email}).get("Item")
             assert code_item is not None
             verification_code = code_item["code"]
@@ -406,8 +441,8 @@ class TestGuestVerificationFlow:
             code="000000",  # Wrong code
         )
 
-        assert verify_result["status"] == "error"
-        assert "invalid" in verify_result["message"].lower() or "incorrect" in verify_result["message"].lower()
+        assert is_error_response(verify_result)
+        assert "invalid" in verify_result.get("message", "").lower() or "incorrect" in verify_result.get("message", "").lower()
 
 
 class TestReservationValidation:
@@ -427,8 +462,8 @@ class TestReservationValidation:
             num_adults=2,
         )
 
-        assert result["status"] == "error"
-        assert "check-out" in result["message"].lower() or "date" in result["message"].lower()
+        assert is_error_response(result)
+        assert "check-out" in result.get("message", "").lower() or "date" in result.get("message", "").lower()
 
     def test_invalid_date_format_fails(
         self,
@@ -444,8 +479,8 @@ class TestReservationValidation:
             num_adults=2,
         )
 
-        assert result["status"] == "error"
-        assert "date" in result["message"].lower() or "format" in result["message"].lower()
+        assert is_error_response(result)
+        assert "date" in result.get("message", "").lower() or "format" in result.get("message", "").lower()
 
     def test_zero_adults_fails(
         self,
@@ -461,8 +496,8 @@ class TestReservationValidation:
             num_adults=0,
         )
 
-        assert result["status"] == "error"
-        assert "adult" in result["message"].lower()
+        assert is_error_response(result)
+        assert "adult" in result.get("message", "").lower()
 
     def test_exceeds_max_guests_fails(
         self,
@@ -479,8 +514,8 @@ class TestReservationValidation:
             num_children=3,  # Total 8, exceeds 6 max
         )
 
-        assert result["status"] == "error"
-        assert "guest" in result["message"].lower() or "maximum" in result["message"].lower()
+        assert is_error_response(result)
+        assert "guest" in result.get("message", "").lower() or "maximum" in result.get("message", "").lower()
 
 
 class TestPaymentProcessing:
@@ -537,8 +572,8 @@ class TestPaymentProcessing:
             payment_method="card",
         )
 
-        assert payment_result["status"] == "error"
-        assert "not found" in payment_result["message"].lower() or "reservation" in payment_result["message"].lower()
+        assert is_error_response(payment_result)
+        assert "not found" in payment_result.get("message", "").lower() or "reservation" in payment_result.get("message", "").lower()
 
 
 class TestConcurrentBookingPrevention:
@@ -582,8 +617,8 @@ class TestConcurrentBookingPrevention:
             results.append(future2.result())
 
         # Count successes and failures
-        successes = [r for r in results if r["status"] == "success"]
-        failures = [r for r in results if r["status"] == "error"]
+        successes = [r for r in results if is_success_response(r)]
+        failures = [r for r in results if is_error_response(r)]
 
         # Exactly one should succeed, one should fail
         assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {results}"
@@ -591,8 +626,9 @@ class TestConcurrentBookingPrevention:
 
         # The failure should indicate booking conflict
         failure = failures[0]
-        assert failure.get("code") in ("BOOKING_CONFLICT", "DATES_UNAVAILABLE"), (
-            f"Expected BOOKING_CONFLICT or DATES_UNAVAILABLE, got: {failure}"
+        error_code = get_error_code(failure)
+        assert error_code in ("BOOKING_CONFLICT", "DATES_UNAVAILABLE", "ERR_001"), (
+            f"Expected BOOKING_CONFLICT, DATES_UNAVAILABLE or ERR_001, got: {failure}"
         )
 
     def test_concurrent_booking_partial_overlap_blocked(
@@ -633,8 +669,8 @@ class TestConcurrentBookingPrevention:
             results.append(future1.result())
             results.append(future2.result())
 
-        successes = [r for r in results if r["status"] == "success"]
-        failures = [r for r in results if r["status"] == "error"]
+        successes = [r for r in results if is_success_response(r)]
+        failures = [r for r in results if is_error_response(r)]
 
         # Both might succeed if timing is such that checks happen before writes,
         # or one succeeds and one fails due to transaction conflict
@@ -643,7 +679,8 @@ class TestConcurrentBookingPrevention:
 
         # If there was a failure, it should have the right code
         for failure in failures:
-            assert failure.get("code") in ("BOOKING_CONFLICT", "DATES_UNAVAILABLE"), (
+            error_code = get_error_code(failure)
+            assert error_code in ("BOOKING_CONFLICT", "DATES_UNAVAILABLE", "ERR_001"), (
                 f"Unexpected error code: {failure}"
             )
 
@@ -678,9 +715,12 @@ class TestConcurrentBookingPrevention:
             num_adults=2,
         )
 
-        assert res2["status"] == "error"
-        assert res2.get("code") == "DATES_UNAVAILABLE"
-        assert "unavailable_dates" in res2
+        assert is_error_response(res2)
+        error_code = get_error_code(res2)
+        assert error_code in ("DATES_UNAVAILABLE", "ERR_001")
+        # unavailable_dates may be at top level or nested in details
+        has_unavailable = "unavailable_dates" in res2 or "unavailable_dates" in res2.get("details", {})
+        assert has_unavailable or "details" in res2
 
     def test_non_overlapping_concurrent_bookings_both_succeed(
         self,

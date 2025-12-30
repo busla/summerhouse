@@ -90,7 +90,7 @@ def dynamodb_tables(mock_aws_context: None) -> Generator[Any, None, None]:
                 "Projection": {"ProjectionType": "ALL"},
             },
             {
-                "IndexName": "cognito_sub-index",
+                "IndexName": "cognito-sub-index",
                 "KeySchema": [{"AttributeName": "cognito_sub", "KeyType": "HASH"}],
                 "Projection": {"ProjectionType": "ALL"},
             },

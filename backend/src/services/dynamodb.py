@@ -317,11 +317,31 @@ class DynamoDBService:
         """
         results = self.query_by_gsi(
             table="guests",
-            index_name="cognito_sub-index",
+            index_name="cognito-sub-index",  # Note: hyphen, not underscore (per Terraform)
             partition_key_name="cognito_sub",
             partition_key_value=cognito_sub,
         )
         return results[0] if results else None
+
+    def get_reservations_by_guest_id(
+        self, guest_id: str, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Get all reservations for a guest using GSI.
+
+        Args:
+            guest_id: Guest ID to query reservations for
+            limit: Optional limit on number of results
+
+        Returns:
+            List of reservation dicts, ordered by check_in date (descending)
+        """
+        return self.query(
+            table="reservations",
+            key_condition=Key("guest_id").eq(guest_id),
+            index_name="guest-checkin-index",
+            limit=limit,
+            scan_index_forward=False,  # Most recent first
+        )
 
     def create_guest(self, guest: dict[str, Any]) -> bool:
         """Create a new guest record.

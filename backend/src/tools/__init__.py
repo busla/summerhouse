@@ -7,7 +7,7 @@ Tools are organized by category:
 - Reservations: create_reservation, get_reservation
 - Payments: process_payment, get_payment_status, retry_payment
 - Guest: get_guest_info, update_guest_details
-- Auth: initiate_cognito_login, verify_cognito_otp, get_authenticated_guest (Cognito EMAIL_OTP + OAuth2 3LO)
+- Auth: initiate_cognito_login, verify_cognito_otp (Cognito EMAIL_OTP passwordless)
 - Area Info: get_area_info, get_recommendations
 - Property: get_property_details, get_photos
 """
@@ -20,7 +20,6 @@ logger.info("[TOOLS] Loading tools module v3...")
 
 from src.tools.area_info import get_area_info, get_recommendations
 from src.tools.auth import (
-    get_authenticated_guest,
     initiate_cognito_login,
     verify_cognito_otp,
 )
@@ -108,7 +107,6 @@ __all__ = [
     "update_guest_details",
     "initiate_cognito_login",
     "verify_cognito_otp",
-    "get_authenticated_guest",
     "get_area_info",
     "get_recommendations",
     "get_property_details",

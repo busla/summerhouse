@@ -1,0 +1,1 @@
+{"filename": "builds/1330a293049739ae64ba1eeb6b2538d74844b79e672faa0a45764c9ff47e25e0.zip", "runtime": "python3.13", "artifacts_dir": "builds", "build_plan": [[["pip", "python3.13", "./../backend/requirements-api.txt", null, null], ["zip", "../backend/src", null]]], "quiet": "true"}

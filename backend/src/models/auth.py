@@ -3,11 +3,13 @@
 This module defines models for:
 - CognitoAuthState: Tracks USER_AUTH flow state (EMAIL_OTP)
 - AuthResult: Result of OTP verification
+- TokenDeliveryEvent: Structured token delivery for frontend (T001)
 - WorkloadToken: Agent workload access token (in-memory only)
 """
 
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,7 +48,10 @@ class CognitoAuthState(BaseModel):
 
 
 class AuthResult(BaseModel):
-    """Result of OTP verification or authentication flow."""
+    """Result of OTP verification or authentication flow.
+
+    Updated per T002 to include Cognito token fields for token delivery.
+    """
 
     model_config = ConfigDict(strict=True)
 
@@ -55,6 +60,12 @@ class AuthResult(BaseModel):
     cognito_sub: str | None = Field(default=None, description="Cognito sub claim")
     error_code: str | None = Field(default=None, description="Error code if failed")
     message: str = Field(..., description="Human-readable status message")
+
+    # Token fields for successful authentication (T002)
+    id_token: str | None = Field(default=None, description="Cognito ID token (JWT)")
+    access_token: str | None = Field(default=None, description="Cognito access token (JWT)")
+    refresh_token: str | None = Field(default=None, description="Cognito refresh token")
+    expires_in: int | None = Field(default=None, description="Token expiry in seconds")
 
 
 class WorkloadToken(BaseModel):
@@ -91,3 +102,43 @@ class OAuth2CompletionResult(BaseModel):
     success: bool = Field(..., description="Whether OAuth2 completion succeeded")
     error_code: str | None = Field(default=None, description="Error code if failed")
     message: str | None = Field(default=None, description="Human-readable message")
+
+
+class TokenDeliveryEvent(BaseModel):
+    """Structured token delivery event for frontend session storage (T001).
+
+    This type-discriminated event is returned by verify_cognito_otp on success.
+    The frontend detects this event via `event_type: "auth_tokens"` and extracts
+    tokens for localStorage storage.
+
+    Per spec clarification #1: Direct localStorage storage, no Amplify Auth.
+    Per spec clarification #2: Tokens passed in request payload, not header.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    # Type discriminator for frontend detection
+    event_type: Literal["auth_tokens"] = Field(
+        default="auth_tokens",
+        description="Event type discriminator for frontend detection",
+    )
+    success: Literal[True] = Field(
+        default=True,
+        description="Always true for token delivery events",
+    )
+
+    # Cognito JWT tokens
+    id_token: str = Field(..., min_length=1, description="Cognito ID token (JWT)")
+    access_token: str = Field(..., min_length=1, description="Cognito access token (JWT)")
+    refresh_token: str = Field(..., min_length=1, description="Cognito refresh token")
+    expires_in: int = Field(..., gt=0, description="Token expiry in seconds")
+
+    # User identity
+    guest_id: str = Field(..., description="Guest profile ID")
+    email: str = Field(..., description="Verified email address")
+    cognito_sub: str = Field(
+        ...,
+        min_length=36,
+        max_length=36,
+        description="Cognito user sub (UUID format)",
+    )

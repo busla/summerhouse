@@ -18,7 +18,6 @@ import pytest
 from moto import mock_aws
 
 from src.models.auth import CognitoAuthChallenge, CognitoAuthState
-from src.models.errors import ErrorCode
 
 
 class TestInitiateCognitoLogin:
@@ -80,7 +79,7 @@ class TestInitiateCognitoLogin:
 
         # Then: Should return EMAIL_DELIVERY_FAILED error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.EMAIL_DELIVERY_FAILED.value
+        assert result["error_code"] == "ERR_EMAIL_DELIVERY_FAILED"  # Contract-defined code
 
     def test_initiate_validates_email_format(self) -> None:
         """Should validate email format before calling Cognito."""
@@ -179,7 +178,7 @@ class TestVerifyCognitoOtp:
 
         # Then: Should return INVALID_OTP error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.INVALID_OTP.value
+        assert result["error_code"] == "INVALID_OTP"  # Contract-defined code
 
     def test_verify_otp_returns_expired_error(
         self,
@@ -211,7 +210,7 @@ class TestVerifyCognitoOtp:
 
         # Then: Should return OTP_EXPIRED error
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.OTP_EXPIRED.value
+        assert result["error_code"] == "OTP_EXPIRED"  # Contract-defined code
 
     def test_verify_otp_returns_max_attempts_error(
         self,
@@ -242,7 +241,7 @@ class TestVerifyCognitoOtp:
 
         # Then: Should return MAX_ATTEMPTS_EXCEEDED
         assert result["success"] is False
-        assert result["error_code"] == ErrorCode.MAX_ATTEMPTS_EXCEEDED.value
+        assert result["error_code"] == "MAX_ATTEMPTS_EXCEEDED"  # Contract-defined code
 
 
 class TestAuthToolsIntegration:

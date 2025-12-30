@@ -12,6 +12,7 @@ Per TDD gate T034: Implementation to pass T032 tests.
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -22,6 +23,8 @@ from botocore.exceptions import ClientError
 from src.models.auth import AuthResult, CognitoAuthChallenge, CognitoAuthState
 from src.models.errors import BookingError, ErrorCode
 from src.models.guest import Guest
+
+logger = logging.getLogger(__name__)
 
 # OTP validity period in minutes
 OTP_VALIDITY_MINUTES = 5
@@ -190,7 +193,7 @@ class AuthService:
             return (
                 AuthResult(
                     success=False,
-                    error_code=ErrorCode.MAX_ATTEMPTS_EXCEEDED.value,
+                    error_code="MAX_ATTEMPTS_EXCEEDED",  # Contract-defined code
                     message="Maximum verification attempts exceeded",
                 ),
                 auth_state,
@@ -203,7 +206,7 @@ class AuthService:
                 return (
                     AuthResult(
                         success=False,
-                        error_code=ErrorCode.OTP_EXPIRED.value,
+                        error_code="OTP_EXPIRED",  # Contract-defined code
                         message="OTP code has expired",
                     ),
                     auth_state,
@@ -221,8 +224,14 @@ class AuthService:
                 },
             )
 
+            # Extract tokens from Cognito response (T002: return tokens for delivery)
+            auth_result = response["AuthenticationResult"]
+            id_token = auth_result["IdToken"]
+            access_token = auth_result["AccessToken"]
+            refresh_token = auth_result["RefreshToken"]
+            expires_in = auth_result.get("ExpiresIn", 3600)  # Default 1 hour
+
             # Extract cognito_sub from ID token
-            id_token = response["AuthenticationResult"]["IdToken"]
             token_claims = self.decode_id_token(id_token)
             cognito_sub = token_claims.get("sub")
 
@@ -231,6 +240,11 @@ class AuthService:
                     success=True,
                     cognito_sub=cognito_sub,
                     message="Authentication successful",
+                    # Include tokens for frontend delivery (T002)
+                    id_token=id_token,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    expires_in=expires_in,
                 ),
                 auth_state,
             )
@@ -251,7 +265,7 @@ class AuthService:
                 return (
                     AuthResult(
                         success=False,
-                        error_code=ErrorCode.INVALID_OTP.value,
+                        error_code="INVALID_OTP",  # Contract-defined code
                         message="Invalid OTP code",
                     ),
                     updated_state,
@@ -263,12 +277,14 @@ class AuthService:
     def get_or_create_guest(self, email: str, cognito_sub: str) -> Guest:
         """Get existing guest or create new one after authentication.
 
-        Lookup flow:
+        Lookup flow (T036-T038):
         1. Query by email (GSI)
         2. If found:
            - If cognito_sub matches or is empty, return/update guest
            - If cognito_sub differs, raise USER_MISMATCH error
-        3. If not found, create new guest
+        3. If not found by email, try lookup by cognito_sub (T038 edge case)
+           - Handles: Cognito user exists but no guest by email
+        4. If not found by either, create new guest
 
         Args:
             email: Verified email address
@@ -284,6 +300,11 @@ class AuthService:
 
         db = get_dynamodb_service()
 
+        logger.info(
+            "Looking up guest for authentication",
+            extra={"email": email[:3] + "***", "cognito_sub_prefix": cognito_sub[:8]},
+        )
+
         # Try to find existing guest by email
         existing_guest = db.get_guest_by_email(email)
 
@@ -292,14 +313,34 @@ class AuthService:
             stored_sub = existing_guest.get("cognito_sub")
 
             if stored_sub and stored_sub != cognito_sub:
+                logger.warning(
+                    "Cognito sub mismatch for existing guest",
+                    extra={
+                        "guest_id": existing_guest["guest_id"],
+                        "stored_sub_prefix": stored_sub[:8],
+                        "new_sub_prefix": cognito_sub[:8],
+                    },
+                )
                 raise BookingError(
                     code=ErrorCode.USER_MISMATCH,
                     details={"email": email},
                 )
 
-            # Bind cognito_sub if not already set
+            # Bind cognito_sub if not already set (T037 logging)
             if not stored_sub:
+                logger.info(
+                    "Binding cognito_sub to existing guest (first login)",
+                    extra={
+                        "guest_id": existing_guest["guest_id"],
+                        "cognito_sub_prefix": cognito_sub[:8],
+                    },
+                )
                 db.update_guest_cognito_sub(existing_guest["guest_id"], cognito_sub)
+            else:
+                logger.info(
+                    "Returning user authenticated",
+                    extra={"guest_id": existing_guest["guest_id"]},
+                )
 
             # Build Guest model from existing data
             # Handle legacy records that may be missing timestamps
@@ -324,7 +365,46 @@ class AuthService:
                 updated_at=updated_at,
             )
 
-        # Create new guest
+        # T038: Edge case - Cognito user exists but no guest by email
+        # Try lookup by cognito_sub (handles: email changed in Cognito, or orphaned guest)
+        existing_by_sub = db.get_guest_by_cognito_sub(cognito_sub)
+
+        if existing_by_sub:
+            logger.info(
+                "Found guest by cognito_sub (email not matched - updating email)",
+                extra={
+                    "guest_id": existing_by_sub["guest_id"],
+                    "old_email_prefix": existing_by_sub.get("email", "")[:3],
+                    "new_email_prefix": email[:3],
+                },
+            )
+            # Update email to current verified email
+            db.update_item(
+                table="guests",
+                key={"guest_id": existing_by_sub["guest_id"]},
+                update_expression="SET email = :email, updated_at = :updated_at",
+                expression_attribute_values={
+                    ":email": email,
+                    ":updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+            now = datetime.now(timezone.utc)
+            created_at = existing_by_sub.get("created_at", now)
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+
+            return Guest(
+                guest_id=existing_by_sub["guest_id"],
+                email=email,  # Use new verified email
+                name=existing_by_sub.get("full_name") or existing_by_sub.get("name"),
+                cognito_sub=cognito_sub,
+                email_verified=True,
+                created_at=created_at,
+                updated_at=now,
+            )
+
+        # Create new guest (T037 logging)
         guest_id = f"guest-{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc)
         new_guest = Guest(
@@ -335,6 +415,11 @@ class AuthService:
             first_verified_at=now,
             created_at=now,
             updated_at=now,
+        )
+
+        logger.info(
+            "New user registration - creating guest record",
+            extra={"guest_id": guest_id, "cognito_sub_prefix": cognito_sub[:8]},
         )
 
         db.create_guest(new_guest.model_dump(mode="json"))

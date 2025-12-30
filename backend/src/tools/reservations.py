@@ -599,6 +599,90 @@ def cancel_reservation(
 
 
 @tool
+def get_my_reservations(auth_token: str | None = None) -> dict[str, Any]:
+    """Get all reservations for the authenticated user.
+
+    Use this tool when an authenticated guest asks about their bookings,
+    such as "What are my reservations?" or "Show me my bookings".
+
+    This tool requires the user to be authenticated. If no auth_token is
+    provided or the token is invalid, returns an authentication required error.
+
+    Args:
+        auth_token: JWT token from the authenticated user's session.
+                   Contains the cognito_sub claim to identify the user.
+
+    Returns:
+        Dictionary with list of user's reservations or error if not authenticated
+    """
+    from src.utils.jwt import extract_cognito_sub
+
+    logger.info("get_my_reservations called")
+
+    # Extract cognito_sub from JWT
+    cognito_sub = extract_cognito_sub(auth_token)
+    if not cognito_sub:
+        error = ToolError.from_code(
+            ErrorCode.VERIFICATION_REQUIRED,
+            details={"reason": "Authentication required to view your reservations"},
+        )
+        return error.model_dump()
+
+    db = _get_db()
+
+    # Look up guest by cognito_sub
+    guest = db.get_guest_by_cognito_sub(cognito_sub)
+    if not guest:
+        # User is authenticated but has no guest record yet
+        logger.info(
+            "Authenticated user has no guest record",
+            extra={"cognito_sub": cognito_sub[:8] + "..."},
+        )
+        return {
+            "status": "success",
+            "reservations": [],
+            "count": 0,
+            "message": "You don't have any reservations yet. Would you like to make a booking?",
+        }
+
+    guest_id = guest["guest_id"]
+    logger.info("Looking up reservations for guest", extra={"guest_id": guest_id})
+
+    # Get reservations for this guest
+    reservations = db.get_reservations_by_guest_id(guest_id)
+
+    # Format reservations for response
+    formatted = []
+    for res in reservations:
+        formatted.append({
+            "reservation_id": res["reservation_id"],
+            "check_in": res["check_in"],
+            "check_out": res["check_out"],
+            "nights": res.get("nights", 0),
+            "num_adults": res.get("num_adults", 1),
+            "num_children": res.get("num_children", 0),
+            "total_amount_eur": int(res.get("total_amount", 0)) / 100,
+            "status": res.get("status", "unknown"),
+            "payment_status": res.get("payment_status", "unknown"),
+        })
+
+    if not formatted:
+        return {
+            "status": "success",
+            "reservations": [],
+            "count": 0,
+            "message": "You don't have any reservations yet. Would you like to make a booking?",
+        }
+
+    return {
+        "status": "success",
+        "reservations": formatted,
+        "count": len(formatted),
+        "message": f"Found {len(formatted)} reservation(s).",
+    }
+
+
+@tool
 def get_reservation(reservation_id: str) -> dict[str, Any]:
     """Get details of an existing reservation.
 
