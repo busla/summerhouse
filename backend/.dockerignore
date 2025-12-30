@@ -28,6 +28,7 @@ htmlcov/
 tests/
 *.md
 !README.md
+!src/agent/prompts/*.md
 .ruff_cache/
 
 # Environment

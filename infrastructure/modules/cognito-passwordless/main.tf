@@ -150,8 +150,10 @@ resource "aws_ses_identity_policy" "cognito_sending" {
 }
 
 # -----------------------------------------------------------------------------
-# Cognito User Pool Client
+# Cognito User Pool Client (Public - Frontend/Amplify)
 # -----------------------------------------------------------------------------
+# Public client for frontend use with Amplify Auth.
+# No client secret - suitable for browser-based authentication.
 
 resource "aws_cognito_user_pool_client" "main" {
   name         = "${module.label.id}-client"
@@ -175,12 +177,66 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "days"
   }
 
+  # OAuth2 settings for Amplify-based authentication (when callback URLs are provided)
+  callback_urls                = length(var.frontend_callback_urls) > 0 ? var.frontend_callback_urls : null
+  logout_urls                  = length(var.frontend_callback_urls) > 0 ? var.frontend_callback_urls : null
+  allowed_oauth_flows          = length(var.frontend_callback_urls) > 0 ? ["code"] : null
+  allowed_oauth_scopes         = length(var.frontend_callback_urls) > 0 ? ["openid", "email", "profile"] : null
+  allowed_oauth_flows_user_pool_client = length(var.frontend_callback_urls) > 0 ? true : false
+  supported_identity_providers = length(var.frontend_callback_urls) > 0 ? ["COGNITO"] : null
+
   # Security
   prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true
 
   # No client secret for public client (frontend)
   generate_secret = false
+}
+
+# -----------------------------------------------------------------------------
+# Cognito User Pool Client (Confidential - AgentCore OAuth2)
+# -----------------------------------------------------------------------------
+# Confidential client for AgentCore OAuth2 Credential Provider.
+# Has client secret - required for server-side OAuth2 flows.
+# Created only when agentcore_callback_urls is provided.
+
+resource "aws_cognito_user_pool_client" "agentcore" {
+  count = length(var.agentcore_callback_urls) > 0 ? 1 : 0
+
+  name         = "${module.label.id}-agentcore"
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  # Auth flows for OAuth2 authorization code flow
+  explicit_auth_flows = [
+    "ALLOW_USER_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH",
+  ]
+
+  # Token validity - longer for server-side use
+  access_token_validity  = 1   # hours
+  id_token_validity      = 1   # hours
+  refresh_token_validity = 30  # days
+
+  token_validity_units {
+    access_token  = "hours"
+    id_token      = "hours"
+    refresh_token = "days"
+  }
+
+  # OAuth2 settings for AgentCore integration
+  callback_urls                        = var.agentcore_callback_urls
+  logout_urls                          = var.agentcore_callback_urls
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["openid", "email", "profile"]
+  allowed_oauth_flows_user_pool_client = true
+  supported_identity_providers         = ["COGNITO"]
+
+  # Security
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+
+  # Generate client secret for confidential client (required by AgentCore)
+  generate_secret = true
 }
 
 # -----------------------------------------------------------------------------
@@ -274,4 +330,16 @@ resource "aws_cognito_identity_pool_roles_attachment" "main" {
     "unauthenticated" = aws_iam_role.unauthenticated.arn
     "authenticated"   = aws_iam_role.authenticated.arn
   }
+}
+
+# -----------------------------------------------------------------------------
+# Cognito User Pool Domain (required for OAuth2 flows)
+# -----------------------------------------------------------------------------
+# OAuth2 authorization endpoints require a domain to be configured.
+# This creates a Cognito-hosted domain: {domain_prefix}.auth.{region}.amazoncognito.com
+# Required for AgentCore OAuth2 Credential Provider to work.
+
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = module.label.id # e.g., "booking-dev-auth"
+  user_pool_id = aws_cognito_user_pool.main.id
 }

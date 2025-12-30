@@ -21,8 +21,19 @@ output "user_pool_endpoint" {
 }
 
 output "client_id" {
-  description = "Cognito User Pool Client ID"
+  description = "Cognito User Pool Client ID (public client for frontend)"
   value       = aws_cognito_user_pool_client.main.id
+}
+
+output "agentcore_client_id" {
+  description = "Cognito User Pool Client ID (confidential client for AgentCore OAuth2)"
+  value       = length(aws_cognito_user_pool_client.agentcore) > 0 ? aws_cognito_user_pool_client.agentcore[0].id : null
+}
+
+output "agentcore_client_secret" {
+  description = "Cognito User Pool Client Secret (confidential client for AgentCore OAuth2)"
+  value       = length(aws_cognito_user_pool_client.agentcore) > 0 ? aws_cognito_user_pool_client.agentcore[0].client_secret : null
+  sensitive   = true
 }
 
 output "discovery_url" {
@@ -67,4 +78,18 @@ output "authenticated_role_arn" {
 output "authenticated_role_name" {
   description = "IAM Role name for authenticated Identity Pool users"
   value       = aws_iam_role.authenticated.name
+}
+
+# -----------------------------------------------------------------------------
+# User Pool Domain Outputs (required for OAuth2 flows)
+# -----------------------------------------------------------------------------
+
+output "user_pool_domain" {
+  description = "Cognito User Pool domain prefix"
+  value       = aws_cognito_user_pool_domain.main.domain
+}
+
+output "user_pool_domain_url" {
+  description = "Cognito User Pool full domain URL for OAuth2 flows"
+  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
 }

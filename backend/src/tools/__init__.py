@@ -4,12 +4,15 @@ This module exports all tools available to the booking agent.
 Tools are organized by category:
 - Availability: check_availability, get_calendar
 - Pricing: get_pricing, calculate_total, get_seasonal_rates, check_minimum_stay, get_minimum_stay_info
-- Reservations: create_reservation, get_reservation
+- Reservations: create_reservation, get_reservation, modify_reservation, cancel_reservation
 - Payments: process_payment, get_payment_status, retry_payment
 - Guest: get_guest_info, update_guest_details
-- Auth: initiate_cognito_login, verify_cognito_otp (Cognito EMAIL_OTP passwordless)
 - Area Info: get_area_info, get_recommendations
 - Property: get_property_details, get_photos
+
+Authentication: Handled by frontend via Cognito EMAIL_OTP. The agent does NOT
+handle authentication directly - it receives auth_required responses from
+reservation tools and directs users to the login page on the frontend.
 """
 
 # Force rebuild: 2025-12-29T22:56:00Z
@@ -19,18 +22,17 @@ logger = logging.getLogger(__name__)
 logger.info("[TOOLS] Loading tools module v3...")
 
 from src.tools.area_info import get_area_info, get_recommendations
-from src.tools.auth import (
-    initiate_cognito_login,
-    verify_cognito_otp,
-)
+# OAuth2 authentication is now handled by @requires_access_token decorator
+# on booking tools. Old EMAIL_OTP tools are deprecated but kept for reference.
+# from src.tools.auth import initiate_cognito_login, verify_cognito_otp
 from src.tools.property import get_photos, get_property_details
 from src.tools.availability import check_availability, get_calendar
 from src.tools.guest import (
     get_guest_info,
-    initiate_verification,
     update_guest_details,
-    verify_code,
 )
+# Auth tools removed: initiate_verification, verify_code
+# Authentication is handled by the frontend via Cognito EMAIL_OTP
 from src.tools.payments import get_payment_status, process_payment, retry_payment
 from src.tools.pricing import (
     calculate_total,
@@ -42,6 +44,8 @@ from src.tools.pricing import (
 from src.tools.reservations import (
     cancel_reservation,
     create_reservation,
+    get_authenticated_user,
+    get_my_reservations,
     get_reservation,
     modify_reservation,
 )
@@ -57,9 +61,12 @@ ALL_TOOLS = [
     get_seasonal_rates,
     check_minimum_stay,
     get_minimum_stay_info,
+    # Auth check (call FIRST before booking flow)
+    get_authenticated_user,
     # Reservation tools
     create_reservation,
     get_reservation,
+    get_my_reservations,
     modify_reservation,
     cancel_reservation,
     # Payment tools
@@ -69,10 +76,8 @@ ALL_TOOLS = [
     # Guest profile tools
     get_guest_info,
     update_guest_details,
-    # Auth tools (Cognito EMAIL_OTP passwordless)
-    # Uses native Cognito USER_AUTH flow with EMAIL_OTP challenge
-    initiate_cognito_login,
-    verify_cognito_otp,
+    # Auth: Frontend handles login via Cognito EMAIL_OTP
+    # Agent receives auth_required response and directs user to login page
     # Area info tools
     get_area_info,
     get_recommendations,
@@ -94,19 +99,19 @@ __all__ = [
     "get_seasonal_rates",
     "check_minimum_stay",
     "get_minimum_stay_info",
+    "get_authenticated_user",
     "create_reservation",
     "get_reservation",
+    "get_my_reservations",
     "modify_reservation",
     "cancel_reservation",
     "process_payment",
     "get_payment_status",
     "retry_payment",
-    "initiate_verification",
-    "verify_code",
     "get_guest_info",
     "update_guest_details",
-    "initiate_cognito_login",
-    "verify_cognito_otp",
+    # Auth tools removed: initiate_verification, verify_code
+    # Authentication handled by frontend via Cognito EMAIL_OTP
     "get_area_info",
     "get_recommendations",
     "get_property_details",

@@ -107,3 +107,32 @@ variable "ses_from_email" {
   type        = string
   default     = ""
 }
+
+# -----------------------------------------------------------------------------
+# AgentCore OAuth2 Integration
+# -----------------------------------------------------------------------------
+
+variable "agentcore_callback_urls" {
+  description = <<-EOT
+    Callback URLs for AgentCore OAuth2 integration. These are the URLs that
+    AgentCore Identity will redirect to after OAuth2 authorization.
+
+    When set, creates a confidential Cognito User Pool Client (with client_secret)
+    for AgentCore to use as an OAuth2 credential provider.
+
+    Example: ["https://bedrock-agentcore.eu-west-1.amazonaws.com/oauth2/callback/abc123"]
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "frontend_callback_urls" {
+  description = <<-EOT
+    Callback URLs for frontend Amplify OAuth2 integration. These are where
+    Amplify Auth redirects after Cognito authentication completes.
+
+    Example: ["https://myapp.example.com/auth/callback"]
+  EOT
+  type        = list(string)
+  default     = []
+}

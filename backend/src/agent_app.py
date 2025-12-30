@@ -9,18 +9,14 @@ Implements Vercel AI SDK v6 UI Message Stream Protocol for frontend compatibilit
 Session Management:
 - Uses Strands S3SessionManager for conversation persistence
 - Each session_id from the frontend maps to a unique conversation history
-- Conversation history is restored when agent is created with session manager
-- Uses synchronous agent() call with callback for proper session persistence
+- Uses stream_async for native async streaming (follows AgentCore samples pattern)
 """
 
-import asyncio
 import logging
 import os
-import queue
 import sys
 import uuid
 from collections.abc import AsyncGenerator
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -47,26 +43,13 @@ app = BedrockAgentCoreApp()
 SESSION_BUCKET = os.environ.get("SESSION_BUCKET", "")
 SESSION_PREFIX = os.environ.get("SESSION_PREFIX", "agent-sessions/")
 
-# Thread pool for running sync agent calls
-_executor = ThreadPoolExecutor(max_workers=10)
 
-
-def _sse_event(data: dict[str, Any]) -> dict[str, Any]:
-    """Wrap data in SSE-compatible format for AgentCore streaming.
-
-    AgentCore's BedrockAgentCoreApp automatically converts yielded dicts
-    to SSE format: `data: {json}\n\n`
-    """
-    return data
-
-
-def _create_session_agent(session_id: str, callback_handler: Any = None) -> Any:
+def _create_session_agent(session_id: str) -> Any:
     """Create an agent with session management for conversation persistence.
 
     Args:
         session_id: Unique identifier for the conversation session.
                    Conversations with the same session_id share history.
-        callback_handler: Optional callback for streaming events.
 
     Returns:
         Agent instance configured with S3 session manager (if SESSION_BUCKET is set)
@@ -80,46 +63,24 @@ def _create_session_agent(session_id: str, callback_handler: Any = None) -> Any:
             bucket=SESSION_BUCKET,
             prefix=SESSION_PREFIX,
         )
-        return create_booking_agent(session_manager=session_manager, callback_handler=callback_handler)
+        return create_booking_agent(session_manager=session_manager)
     else:
         # Development/fallback: No session persistence
-        # Each request creates a fresh agent without history
         logger.warning("SESSION_BUCKET not set - agent will not persist conversation history")
-        return create_booking_agent(callback_handler=callback_handler)
-
-
-def _run_agent_sync(agent: Any, prompt: str, event_queue: queue.Queue) -> None:
-    """Run agent synchronously in a thread, pushing events to queue.
-
-    This ensures the synchronous agent() call is used, which properly
-    triggers session persistence hooks (unlike stream_async).
-    """
-    try:
-        # The synchronous agent() call triggers session persistence automatically
-        # The callback_handler receives streaming events
-        agent(prompt)
-        # Signal completion
-        event_queue.put({"_done": True})
-    except Exception as e:
-        logger.error(f"Agent execution error: {e}")
-        event_queue.put({"_error": str(e)})
-        event_queue.put({"_done": True})
+        return create_booking_agent()
 
 
 @app.entrypoint
 async def invoke(payload: dict[str, Any]) -> AsyncGenerator[dict[str, Any]]:
     """Handle agent invocation requests with AI SDK v6 streaming.
 
-    Creates a session-bound agent that maintains conversation history across
-    multiple invocations with the same session_id.
-
-    Uses synchronous agent() call with callback handler to ensure proper
-    session persistence (stream_async doesn't trigger session save hooks).
+    Uses stream_async for native async streaming (follows AgentCore samples pattern).
 
     Args:
         payload: Request payload containing:
             - prompt: User message (required)
             - session_id: Session identifier for conversation continuity (required)
+            - auth_token: Optional JWT token for authenticated requests
 
     Yields:
         AI SDK v6 UI Message Stream Protocol events:
@@ -131,93 +92,59 @@ async def invoke(payload: dict[str, Any]) -> AsyncGenerator[dict[str, Any]]:
     """
     prompt = payload.get("prompt", "")
     session_id = payload.get("session_id", str(uuid.uuid4()))
+    auth_token = payload.get("auth_token")
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     text_part_id = f"text_{uuid.uuid4().hex[:16]}"
 
-    logger.info(f"Agent invocation: session_id={session_id}, prompt_length={len(prompt)}")
+    request_type = "authenticated" if auth_token else "anonymous"
+    logger.info(f"Agent invocation: session_id={session_id}, type={request_type}, prompt_length={len(prompt)}")
 
     if not prompt:
         # Emit error as AI SDK v6 stream
-        yield _sse_event({"type": "start", "messageId": message_id})
-        yield _sse_event({"type": "text-start", "id": text_part_id})
-        yield _sse_event({
+        yield {"type": "start", "messageId": message_id}
+        yield {"type": "text-start", "id": text_part_id}
+        yield {
             "type": "text-delta",
             "id": text_part_id,
             "delta": "Error: No prompt provided. Please include a 'prompt' key in the request.",
-        })
-        yield _sse_event({"type": "text-end", "id": text_part_id})
-        yield _sse_event({"type": "finish", "finishReason": "error"})
+        }
+        yield {"type": "text-end", "id": text_part_id}
+        yield {"type": "finish", "finishReason": "error"}
         return
 
     # Emit start events
-    yield _sse_event({"type": "start", "messageId": message_id})
-    yield _sse_event({"type": "text-start", "id": text_part_id})
-
-    # Create queue for passing events from callback to async generator
-    event_queue: queue.Queue = queue.Queue()
-
-    # Callback handler that pushes text deltas to the queue
-    def streaming_callback(**kwargs):
-        """Callback handler that queues text deltas for streaming."""
-        if "data" in kwargs and isinstance(kwargs["data"], str):
-            event_queue.put({"text": kwargs["data"]})
+    yield {"type": "start", "messageId": message_id}
+    yield {"type": "text-start", "id": text_part_id}
 
     try:
-        # Create a session-bound agent with callback handler
-        agent = _create_session_agent(session_id, callback_handler=streaming_callback)
+        # Create a session-bound agent
+        agent = _create_session_agent(session_id)
 
-        # Run agent synchronously in thread pool (ensures session persistence)
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(_executor, _run_agent_sync, agent, prompt, event_queue)
+        # Set auth_token in agent state for tools to access via ToolContext
+        if auth_token:
+            agent.state.set("auth_token", auth_token)
 
-        # Stream events from queue while agent runs
-        while True:
-            try:
-                # Check for events with small timeout
-                event = event_queue.get(timeout=0.1)
-
-                if "_done" in event:
-                    break
-                elif "_error" in event:
-                    yield _sse_event({
-                        "type": "text-delta",
-                        "id": text_part_id,
-                        "delta": f"\n\nError: {event['_error']}",
-                    })
-                elif "text" in event and event["text"]:
-                    yield _sse_event({
-                        "type": "text-delta",
-                        "id": text_part_id,
-                        "delta": event["text"],
-                    })
-
-            except queue.Empty:
-                # Check if executor is done
-                if future.done():
-                    # Drain remaining queue
-                    while not event_queue.empty():
-                        event = event_queue.get_nowait()
-                        if "text" in event and event["text"]:
-                            yield _sse_event({
-                                "type": "text-delta",
-                                "id": text_part_id,
-                                "delta": event["text"],
-                            })
-                    break
-                # Small yield to allow other coroutines
-                await asyncio.sleep(0.01)
+        # Use stream_async for native async streaming (follows AgentCore samples pattern)
+        async for event in agent.stream_async(prompt):
+            # Handle text chunks from model output
+            if "data" in event and event["data"]:
+                yield {
+                    "type": "text-delta",
+                    "id": text_part_id,
+                    "delta": event["data"],
+                }
 
     except Exception as e:
         logger.error(f"Invoke error: {e}")
-        yield _sse_event({
+        yield {
             "type": "text-delta",
             "id": text_part_id,
             "delta": f"\n\nError: {str(e)}",
-        })
+        }
 
     # Emit end events
-    yield _sse_event({"type": "text-end", "id": text_part_id})
-    yield _sse_event({"type": "finish", "finishReason": "stop"})
+    yield {"type": "text-end", "id": text_part_id}
+    yield {"type": "finish", "finishReason": "stop"}
 
 
 if __name__ == "__main__":

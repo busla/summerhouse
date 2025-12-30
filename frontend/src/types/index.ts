@@ -146,67 +146,23 @@ export interface ConfirmationPayload {
 // === Auth Types ===
 
 /**
- * Browser-side auth session stored in localStorage (T005).
- * Updated to include refreshToken and cognitoSub for JWT session auth.
- */
-export interface AuthSession {
-  isAuthenticated: boolean
-  guestId?: string
-  email?: string
-  accessToken?: string
-  idToken?: string
-  refreshToken?: string // T005: Added for token refresh
-  cognitoSub?: string // T005: Added for user identity
-  expiresAt?: number
-}
-
-export interface VerificationState {
-  email: string
-  codeRequested: boolean
-  verified: boolean
-  expiresAt?: number
-}
-
-/**
- * Token delivery event from backend via AgentCore SSE stream (T003).
+ * Auth required event from @requires_access_token decorated tools.
  *
- * The frontend detects this event by checking `event_type === "auth_tokens"`
- * in tool results. When detected, tokens are extracted and stored in localStorage.
+ * When an agent tool requires authentication via AgentCore Identity OAuth2,
+ * it returns this event structure. The frontend should detect this and
+ * redirect the user to the login page with the auth_url.
  *
- * Per spec clarification #1: Direct localStorage storage, no Amplify Auth.
+ * @see specs/005-agentcore-amplify-oauth2/spec.md
  */
-export interface TokenDeliveryEvent {
-  /** Type discriminator - always "auth_tokens" for this event */
-  event_type: 'auth_tokens'
-  /** Always true for successful token delivery */
-  success: true
-  /** Cognito ID token (JWT) */
-  id_token: string
-  /** Cognito access token (JWT) */
-  access_token: string
-  /** Cognito refresh token */
-  refresh_token: string
-  /** Token expiry in seconds */
-  expires_in: number
-  /** Guest profile ID */
-  guest_id: string
-  /** Verified email address */
-  email: string
-  /** Cognito user sub (UUID) */
-  cognito_sub: string
-}
-
-/**
- * Request payload for authenticated AgentCore requests (T004).
- *
- * Per spec clarification #2: JWT passed in request payload (`auth_token` field),
- * not the Authorization header.
- */
-export interface AuthenticatedRequest {
-  /** Chat messages to send */
-  messages: Array<{ role: string; content: string }>
-  /** Optional auth token for authenticated requests */
-  auth_token?: string
+export interface AuthRequiredEvent {
+  /** Status indicator - always "auth_required" for this event */
+  status: 'auth_required'
+  /** AgentCore OAuth2 callback URL to redirect to after login */
+  auth_url: string
+  /** User-friendly message explaining why auth is needed */
+  message: string
+  /** Recommended action for the frontend */
+  action: 'redirect_to_auth'
 }
 
 // === API Response Types ===

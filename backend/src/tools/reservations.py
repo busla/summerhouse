@@ -2,26 +2,90 @@
 
 These tools allow the booking agent to create reservations,
 check reservation details, and manage bookings with double-booking prevention.
+
+Tools that modify reservations (create, modify, cancel) require authentication.
+Users must be logged in via Cognito EMAIL_OTP and pass their JWT token in the
+request payload's `auth_token` field. The token is validated using `extract_cognito_sub`.
+
+Authentication Architecture:
+- Frontend authenticates user via Cognito EMAIL_OTP (initiate_cognito_login/verify_cognito_otp)
+- Frontend stores JWT tokens (id_token, access_token, refresh_token) in localStorage
+- Frontend passes id_token in `auth_token` field when invoking authenticated tools
+- Backend extracts cognito_sub from token to identify user
+- If no valid token, backend returns `auth_required` response for frontend to handle
+
+Note: AgentCore Identity OAuth2 (@requires_access_token) was removed because it's
+designed for external service authentication (Google, GitHub, etc.), not for
+authenticating our own users. Cognito EMAIL_OTP is the correct approach.
 """
 
 import logging
+import os
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from strands import tool
-
-logger = logging.getLogger(__name__)
+from strands import ToolContext, tool
 
 from src.models.enums import AvailabilityStatus, PaymentStatus, ReservationStatus
 from src.models.errors import ErrorCode, ToolError
 from src.models.reservation import Reservation
 from src.services.dynamodb import DynamoDBService, get_dynamodb_service
+from src.utils.jwt import extract_cognito_claims
+
+logger = logging.getLogger(__name__)
+
+# Frontend login URL for auth_required responses
+FRONTEND_LOGIN_URL = os.environ.get("FRONTEND_LOGIN_URL", "/auth/login")
 
 
 def _get_db() -> DynamoDBService:
     """Get shared DynamoDB service instance (singleton for performance)."""
     return get_dynamodb_service()
+
+
+def _get_auth_token(tool_context: ToolContext | None) -> str | None:
+    """Get auth_token from ToolContext agent state.
+
+    T044: Tools read auth_token from agent state, set by agent_app.py
+    from the request payload. This avoids relying on LLM to pass the token.
+
+    Args:
+        tool_context: Strands ToolContext (from @tool(context=True))
+
+    Returns:
+        JWT auth token if present in agent state, None otherwise
+    """
+    if tool_context is None:
+        return None
+    token = tool_context.agent.state.get("auth_token")
+    # State.get() returns Any, but auth_token is always str or None
+    return token if isinstance(token, str) else None
+
+
+def _auth_required_response(reason: str = "complete your booking") -> str:
+    """Return auth_required response as text with embedded redirect marker.
+
+    Following AgentCore samples pattern: return text with embedded URL
+    that the frontend can parse and trigger a redirect.
+
+    The marker format [AUTH_REDIRECT:url] allows the frontend to:
+    1. Detect that authentication is required
+    2. Extract the redirect URL
+    3. Automatically redirect to login
+
+    Args:
+        reason: Why authentication is needed (for message)
+
+    Returns:
+        Text with embedded AUTH_REDIRECT marker for frontend parsing
+    """
+    return (
+        f"🔐 **Authentication Required**\n\n"
+        f"To {reason}, please log in first. "
+        f"I'll send a verification code to your email.\n\n"
+        f"[AUTH_REDIRECT:{FRONTEND_LOGIN_URL}]"
+    )
 
 
 def _parse_date(date_str: str) -> date:
@@ -72,12 +136,12 @@ def _get_pricing_for_dates(check_in: date, check_out: date) -> tuple[int, int]: 
     return (12000, 5000)  # €120/night, €50 cleaning
 
 
-@tool
+@tool(context=True)
 def create_reservation(
-    guest_id: str,
     check_in: str,
     check_out: str,
     num_adults: int,
+    tool_context: ToolContext,
     num_children: int = 0,
     special_requests: str | None = None,
 ) -> dict[str, Any]:
@@ -90,17 +154,40 @@ def create_reservation(
     IMPORTANT: Only call this after the guest has confirmed they want to book.
     First use check_availability to verify dates are available.
 
+    The user must be authenticated. If not logged in, returns auth_required
+    response and the agent should guide the user to log in first.
+
     Args:
-        guest_id: The verified guest's ID (from verification process)
         check_in: Check-in date in YYYY-MM-DD format (e.g., '2025-07-15')
         check_out: Check-out date in YYYY-MM-DD format (e.g., '2025-07-22')
         num_adults: Number of adult guests (at least 1)
+        tool_context: Strands ToolContext (automatically injected)
         num_children: Number of children (default: 0)
         special_requests: Any special requests from the guest (optional)
 
     Returns:
         Dictionary with reservation details or error message
     """
+    # T044: Get auth token from agent state (set by agent_app.py from request payload)
+    auth_token = _get_auth_token(tool_context)
+
+    # Extract user identity from JWT token (both sub and email)
+    cognito_sub, authenticated_email = extract_cognito_claims(auth_token)
+    if not cognito_sub:
+        logger.info("create_reservation called without valid auth_token, returning auth_required")
+        return _auth_required_response("complete your booking")
+
+    # Look up or create guest record for this user
+    db = _get_db()
+    guest = db.get_guest_by_cognito_sub(cognito_sub)
+    if not guest:
+        error = ToolError.from_code(
+            ErrorCode.VERIFICATION_REQUIRED,
+            details={"reason": "Please complete your profile before booking"},
+        )
+        return error.model_dump()
+
+    guest_id = guest["guest_id"]
     logger.info("create_reservation called", extra={"guest_id": guest_id, "check_in": check_in, "check_out": check_out, "num_adults": num_adults, "num_children": num_children})
     try:
         start_date = _parse_date(check_in)
@@ -135,7 +222,7 @@ def create_reservation(
     nights = (end_date - start_date).days
     dates_to_book = _date_range(start_date, end_date)
 
-    db = _get_db()
+    # db already retrieved above when looking up guest
 
     # Check availability with atomic check
     is_available, unavailable_dates = _check_dates_available(db, dates_to_book)
@@ -163,7 +250,7 @@ def create_reservation(
 
     # Generate reservation ID
     reservation_id = _generate_reservation_id()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Create reservation record
     reservation = Reservation(
@@ -245,6 +332,7 @@ def create_reservation(
     return {
         "status": "success",
         "reservation_id": reservation_id,
+        "authenticated_email": authenticated_email,  # Email from JWT - use this, not conversation context
         "check_in": check_in,
         "check_out": check_out,
         "nights": nights,
@@ -254,7 +342,7 @@ def create_reservation(
         "total_amount_cents": total_amount,
         "payment_status": PaymentStatus.PENDING.value,
         "reservation_status": ReservationStatus.PENDING.value,
-        "message": f"Reservation {reservation_id} created! Total: €{total_amount / 100:.2f} for {nights} nights. Please proceed with payment to confirm your booking.",
+        "message": f"Reservation {reservation_id} created for {authenticated_email}! Total: €{total_amount / 100:.2f} for {nights} nights. Please proceed with payment to confirm your booking.",
     }
 
 
@@ -276,9 +364,10 @@ def _serialize_dynamodb(value: Any) -> dict[str, Any]:
         return {"S": str(value)}
 
 
-@tool
+@tool(context=True)
 def modify_reservation(
     reservation_id: str,
+    tool_context: ToolContext,
     new_check_in: str | None = None,
     new_check_out: str | None = None,
     new_num_adults: int | None = None,
@@ -292,9 +381,11 @@ def modify_reservation(
 
     IMPORTANT: Only modify reservations that are pending or confirmed.
     Cannot modify cancelled or completed reservations.
+    The user must be authenticated and own the reservation.
 
     Args:
         reservation_id: The reservation ID (e.g., 'RES-2025-ABCD1234')
+        tool_context: Strands ToolContext (automatically injected)
         new_check_in: New check-in date in YYYY-MM-DD format (optional)
         new_check_out: New check-out date in YYYY-MM-DD format (optional)
         new_num_adults: New number of adults (optional)
@@ -304,6 +395,15 @@ def modify_reservation(
     Returns:
         Dictionary with updated reservation details or error message
     """
+    # T044: Get auth token from agent state (set by agent_app.py from request payload)
+    auth_token = _get_auth_token(tool_context)
+
+    # Verify user identity from JWT token
+    cognito_sub = extract_cognito_sub(auth_token)
+    if not cognito_sub:
+        logger.info("modify_reservation called without valid auth_token, returning auth_required")
+        return _auth_required_response("modify your reservation")
+
     logger.info("modify_reservation called", extra={"reservation_id": reservation_id})
     db = _get_db()
 
@@ -314,6 +414,15 @@ def modify_reservation(
         error = ToolError.from_code(
             ErrorCode.RESERVATION_NOT_FOUND,
             details={"reservation_id": reservation_id},
+        )
+        return error.model_dump()
+
+    # Verify ownership: check that reservation belongs to authenticated user
+    guest = db.get_guest_by_cognito_sub(cognito_sub)
+    if not guest or item.get("guest_id") != guest.get("guest_id"):
+        error = ToolError.from_code(
+            ErrorCode.UNAUTHORIZED,
+            details={"reason": "You can only modify your own reservations"},
         )
         return error.model_dump()
 
@@ -392,7 +501,7 @@ def modify_reservation(
     price_difference = new_total - old_total
 
     # Build update
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     updates = {
         "check_in": check_in.isoformat(),
         "check_out": check_out.isoformat(),
@@ -463,9 +572,10 @@ def modify_reservation(
     return result
 
 
-@tool
+@tool(context=True)
 def cancel_reservation(
     reservation_id: str,
+    tool_context: ToolContext,
     reason: str | None = None,
 ) -> dict[str, Any]:
     """Cancel an existing reservation.
@@ -477,14 +587,25 @@ def cancel_reservation(
     - Less than 14 days: No refund
 
     IMPORTANT: Cannot cancel already cancelled or completed reservations.
+    The user must be authenticated and own the reservation.
 
     Args:
         reservation_id: The reservation ID (e.g., 'RES-2025-ABCD1234')
+        tool_context: Strands ToolContext (automatically injected)
         reason: Optional reason for cancellation
 
     Returns:
         Dictionary with cancellation details and refund information
     """
+    # T044: Get auth token from agent state (set by agent_app.py from request payload)
+    auth_token = _get_auth_token(tool_context)
+
+    # Verify user identity from JWT token
+    cognito_sub = extract_cognito_sub(auth_token)
+    if not cognito_sub:
+        logger.info("cancel_reservation called without valid auth_token, returning auth_required")
+        return _auth_required_response("cancel your reservation")
+
     logger.info("cancel_reservation called", extra={"reservation_id": reservation_id})
     db = _get_db()
 
@@ -495,6 +616,15 @@ def cancel_reservation(
         error = ToolError.from_code(
             ErrorCode.RESERVATION_NOT_FOUND,
             details={"reservation_id": reservation_id},
+        )
+        return error.model_dump()
+
+    # Verify ownership: check that reservation belongs to authenticated user
+    guest = db.get_guest_by_cognito_sub(cognito_sub)
+    if not guest or item.get("guest_id") != guest.get("guest_id"):
+        error = ToolError.from_code(
+            ErrorCode.UNAUTHORIZED,
+            details={"reason": "You can only cancel your own reservations"},
         )
         return error.model_dump()
 
@@ -542,7 +672,7 @@ def cancel_reservation(
         refund_amount = 0
 
     # Prepare transaction items
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     transact_items: list[dict[str, Any]] = []
 
     # Update reservation status
@@ -608,35 +738,32 @@ def cancel_reservation(
     }
 
 
-@tool
-def get_my_reservations(auth_token: str | None = None) -> dict[str, Any]:
+@tool(context=True)
+def get_my_reservations(tool_context: ToolContext) -> dict[str, Any]:
     """Get all reservations for the authenticated user.
 
     Use this tool when an authenticated guest asks about their bookings,
     such as "What are my reservations?" or "Show me my bookings".
 
-    This tool requires the user to be authenticated. If no auth_token is
-    provided or the token is invalid, returns an authentication required error.
+    This tool requires the user to be authenticated. If not logged in,
+    returns auth_required response for the frontend to handle.
 
     Args:
-        auth_token: JWT token from the authenticated user's session.
-                   Contains the cognito_sub claim to identify the user.
+        tool_context: Strands ToolContext (automatically injected)
 
     Returns:
-        Dictionary with list of user's reservations or error if not authenticated
+        Dictionary with list of user's reservations or auth_required if not authenticated
     """
-    from src.utils.jwt import extract_cognito_sub
-
     logger.info("get_my_reservations called")
 
-    # Extract cognito_sub from JWT
+    # T044: Get auth token from agent state (set by agent_app.py from request payload)
+    auth_token = _get_auth_token(tool_context)
+
+    # Extract cognito_sub from JWT token
     cognito_sub = extract_cognito_sub(auth_token)
     if not cognito_sub:
-        error = ToolError.from_code(
-            ErrorCode.VERIFICATION_REQUIRED,
-            details={"reason": "Authentication required to view your reservations"},
-        )
-        return error.model_dump()
+        logger.info("get_my_reservations called without valid auth_token, returning auth_required")
+        return _auth_required_response("view your reservations")
 
     db = _get_db()
 
@@ -689,6 +816,52 @@ def get_my_reservations(auth_token: str | None = None) -> dict[str, Any]:
         "reservations": formatted,
         "count": len(formatted),
         "message": f"Found {len(formatted)} reservation(s).",
+    }
+
+
+@tool(context=True)
+def get_authenticated_user(tool_context: ToolContext) -> dict[str, Any]:
+    """Check if the user is authenticated and return their info.
+
+    Use this tool FIRST when a guest wants to make a booking, modify a reservation,
+    or perform any action that requires authentication. This allows you to:
+    1. Check if they need to log in before proceeding
+    2. Get their verified email address (don't ask them for it)
+    3. Greet them by their verified identity
+
+    IMPORTANT: Call this tool BEFORE asking for booking details. If not authenticated,
+    guide them to log in first. Do not collect email or other details until they're logged in.
+
+    Args:
+        tool_context: Strands ToolContext (automatically injected)
+
+    Returns:
+        If authenticated:
+        - status: "authenticated"
+        - email: User's verified email from Cognito
+        - has_profile: Whether they have a guest profile
+
+        If not authenticated:
+        - Returns auth_required response for frontend to redirect to login
+    """
+    logger.info("get_authenticated_user called")
+
+    auth_token = _get_auth_token(tool_context)
+    cognito_sub, email = extract_cognito_claims(auth_token)
+
+    if not cognito_sub:
+        logger.info("get_authenticated_user: no valid auth_token, returning auth_required")
+        return _auth_required_response("proceed with your booking")
+
+    db = _get_db()
+    guest = db.get_guest_by_cognito_sub(cognito_sub)
+
+    return {
+        "status": "authenticated",
+        "email": email,
+        "has_profile": guest is not None,
+        "guest_id": guest["guest_id"] if guest else None,
+        "message": f"User is authenticated as {email}",
     }
 
 

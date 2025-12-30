@@ -49,7 +49,7 @@ export function Header({ onLogoClick }: HeaderProps) {
             <span className="header-user-email">{session.email}</span>
             <button
               className="header-signout"
-              onClick={signOut}
+              onClick={() => signOut()}
               aria-label="Sign out"
             >
               Sign out

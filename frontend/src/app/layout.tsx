@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Navigation } from '@/components/layout/Navigation'
 import { ChatWidget } from '@/components/layout/ChatWidget'
+import { AmplifyProvider } from '@/components/providers/AmplifyProvider'
 
 export const metadata: Metadata = {
   title: 'Quesada Apartment - Vacation Rental in Costa Blanca',
@@ -42,9 +43,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Navigation />
-        <main className="app-container">{children}</main>
-        <ChatWidget />
+        <AmplifyProvider>
+          <Navigation />
+          <main className="app-container">{children}</main>
+          <ChatWidget />
+        </AmplifyProvider>
       </body>
     </html>
   )
