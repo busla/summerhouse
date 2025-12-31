@@ -58,17 +58,6 @@ class TestCorsConfiguration:
 class TestRoutesRegistered:
     """Tests that all expected routes are registered."""
 
-    def test_auth_routes_registered(self, client: TestClient):
-        """Auth router endpoints should be accessible."""
-        # Check that auth router is mounted by testing a route
-        # The actual auth implementation is tested in test_auth_api.py
-        from api.main import app
-
-        route_paths = [route.path for route in app.routes]
-
-        # Auth routes should be registered
-        assert any("/auth" in path for path in route_paths)
-
     def test_health_routes_registered(self, client: TestClient):
         """Health router endpoints should be accessible."""
         from api.main import app

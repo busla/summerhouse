@@ -92,6 +92,9 @@ addopts = "-v --tb=short"
 markers = [
   "unit: marks tests as unit tests (no external dependencies)",
   "integration: marks tests as integration tests (requires real AWS services)",
+  "e2e: marks tests as end-to-end tests (runs against live deployed API)",
+  "public: marks tests for public endpoints (no auth required)",
+  "protected: marks tests for protected endpoints (auth required)",
 ]
 filterwarnings = [
   # Ignore strands library internal deprecation warning (not in our codebase)

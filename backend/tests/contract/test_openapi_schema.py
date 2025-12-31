@@ -192,24 +192,73 @@ class TestRouteSecurityClassification:
 
     def test_public_routes_have_empty_security(self, generated_openapi: dict) -> None:
         """Public routes must have security: []."""
-        # Currently all routes in this API are public (session status, health)
-        # Note: /api prefix is included because routers are mounted with prefix="/api"
-        # OAuth2 callback is handled by frontend SDK, not backend API
+        # Public routes that don't require JWT authentication
         public_routes = [
+            # Health/ping
             ("get", "/api/ping"),
             ("get", "/api/health"),
-            ("get", "/api/auth/session/{session_id}"),
-            ("post", "/api/auth/refresh"),
+            # Availability (public inquiry)
+            ("get", "/api/availability"),
+            ("get", "/api/availability/calendar/{month}"),
+            # Pricing (public inquiry)
+            ("get", "/api/pricing"),
+            ("get", "/api/pricing/rates"),
+            ("get", "/api/pricing/minimum-stay"),
+            ("get", "/api/pricing/minimum-stay/{date}"),
+            ("get", "/api/pricing/calculate"),
+            # Property (public info)
+            ("get", "/api/property"),
+            ("get", "/api/property/photos"),
+            # Area (public info)
+            ("get", "/api/area"),
+            ("get", "/api/area/recommendations"),
+            # Guest verification (public to initiate)
+            ("post", "/api/guests/verify"),
+            ("post", "/api/guests/verify/confirm"),
+            # Reservation lookup by ID (public for status check)
+            ("get", "/api/reservations/{reservation_id}"),
+            # Payment status lookup (public for status check)
+            ("get", "/api/payments/{reservation_id}"),
         ]
 
         for method, path in public_routes:
             path_item = generated_openapi["paths"].get(path, {})
             if method not in path_item:
-                continue  # Route may not exist
+                continue  # Route may not exist yet
 
             operation = path_item[method]
             assert operation.get("security") == [], (
                 f"Expected empty security for public route {method.upper()} {path}"
+            )
+
+    def test_protected_routes_have_jwt_security(self, generated_openapi: dict) -> None:
+        """Protected routes must require cognito-jwt authentication."""
+        # Routes that require JWT authentication
+        protected_routes = [
+            # Guest profile (owner only)
+            ("get", "/api/guests/{email}"),
+            ("patch", "/api/guests/{guest_id}"),
+            # Reservations (authenticated operations)
+            ("get", "/api/reservations"),  # List user's own reservations
+            ("post", "/api/reservations"),
+            ("patch", "/api/reservations/{reservation_id}"),
+            ("delete", "/api/reservations/{reservation_id}"),
+            # Payments (authenticated operations)
+            ("post", "/api/payments"),
+            ("post", "/api/payments/{reservation_id}/retry"),
+        ]
+
+        for method, path in protected_routes:
+            path_item = generated_openapi["paths"].get(path, {})
+            if method not in path_item:
+                continue  # Route may not exist yet
+
+            operation = path_item[method]
+            security = operation.get("security", [])
+            # Should have cognito-jwt security requirement
+            has_jwt = any("cognito-jwt" in s for s in security if isinstance(s, dict))
+            assert has_jwt, (
+                f"Expected cognito-jwt security for protected route {method.upper()} {path}"
             )
 
 
@@ -244,3 +293,112 @@ class TestCORSConfiguration:
         cors = generated_openapi["x-amazon-apigateway-cors"]
         # With TEST_CORS_ORIGINS = ["*"], credentials must be False
         assert cors.get("allowCredentials") is False
+
+
+class TestAllEndpointsExist:
+    """Test suite verifying all 25 business endpoints exist in OpenAPI spec.
+
+    Organized by user story per spec 007-tools-api-endpoints.
+    """
+
+    # All expected endpoints organized by domain
+    EXPECTED_ENDPOINTS = {
+        # Health & System
+        "health": [
+            ("get", "/api/ping"),
+            ("get", "/api/health"),
+        ],
+        # US1: Availability
+        "availability": [
+            ("get", "/api/availability"),
+            ("get", "/api/availability/calendar/{month}"),
+        ],
+        # US2: Pricing
+        "pricing": [
+            ("get", "/api/pricing"),
+            ("get", "/api/pricing/rates"),
+            ("get", "/api/pricing/minimum-stay"),
+            ("get", "/api/pricing/minimum-stay/{date}"),
+            ("get", "/api/pricing/calculate"),
+        ],
+        # US3: Reservations
+        "reservations": [
+            ("get", "/api/reservations"),
+            ("post", "/api/reservations"),
+            ("get", "/api/reservations/{reservation_id}"),
+            ("patch", "/api/reservations/{reservation_id}"),
+            ("delete", "/api/reservations/{reservation_id}"),
+        ],
+        # US4: Payments
+        "payments": [
+            ("post", "/api/payments"),
+            ("get", "/api/payments/{reservation_id}"),
+            ("post", "/api/payments/{reservation_id}/retry"),
+        ],
+        # US5: Guests
+        "guests": [
+            ("post", "/api/guests/verify"),
+            ("post", "/api/guests/verify/confirm"),
+            ("get", "/api/guests/{email}"),
+            ("patch", "/api/guests/{guest_id}"),
+        ],
+        # US6: Property
+        "property": [
+            ("get", "/api/property"),
+            ("get", "/api/property/photos"),
+        ],
+        # US7: Area
+        "area": [
+            ("get", "/api/area"),
+            ("get", "/api/area/recommendations"),
+        ],
+    }
+
+    def test_all_business_endpoints_exist(self, generated_openapi: dict) -> None:
+        """Verify all 25 business endpoints are present in the OpenAPI spec."""
+        missing = []
+        paths = generated_openapi.get("paths", {})
+
+        for domain, endpoints in self.EXPECTED_ENDPOINTS.items():
+            for method, path in endpoints:
+                path_item = paths.get(path, {})
+                if method not in path_item:
+                    missing.append(f"{method.upper()} {path} ({domain})")
+
+        assert not missing, f"Missing endpoints:\n" + "\n".join(missing)
+
+    def test_endpoint_count_matches_expected(self, generated_openapi: dict) -> None:
+        """Total business endpoint count should match expected."""
+        expected_count = sum(
+            len(endpoints) for endpoints in self.EXPECTED_ENDPOINTS.values()
+        )
+        # Count actual endpoints (excluding framework routes like /docs, /openapi.json)
+        actual_count = 0
+        for path, path_item in generated_openapi.get("paths", {}).items():
+            if path.startswith("/api/"):  # Only count /api/ routes
+                for method in ["get", "post", "put", "delete", "patch"]:
+                    if method in path_item:
+                        actual_count += 1
+
+        assert actual_count >= expected_count, (
+            f"Expected at least {expected_count} endpoints, found {actual_count}"
+        )
+
+    @pytest.mark.parametrize(
+        "domain",
+        ["health", "availability", "pricing", "reservations", "payments", "guests", "property", "area"],
+    )
+    def test_domain_endpoints_complete(
+        self, generated_openapi: dict, domain: str
+    ) -> None:
+        """Each domain must have all its expected endpoints."""
+        paths = generated_openapi.get("paths", {})
+        endpoints = self.EXPECTED_ENDPOINTS[domain]
+        missing = []
+
+        for method, path in endpoints:
+            path_item = paths.get(path, {})
+            if method not in path_item:
+                missing.append(f"{method.upper()} {path}")
+
+        assert not missing, f"Missing {domain} endpoints:\n" + "\n".join(missing)

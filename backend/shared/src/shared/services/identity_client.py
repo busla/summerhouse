@@ -1,14 +1,10 @@
-"""AgentCore Identity client wrapper for OAuth2 and workload token operations.
+"""AgentCore Identity client wrapper for workload token operations.
 
 This service wraps the bedrock_agentcore IdentityClient to provide:
 1. get_workload_token: Get agent workload access token (anonymous or user-delegated)
-2. initiate_oauth2: Start 3-legged OAuth2 flow
-3. complete_oauth2: Complete OAuth2 after callback
-4. get_session: Lookup OAuth2 session by session_id
 
-Key insight: AgentCore handles OAuth2 state/PKCE internally via two-stage callback:
-1. Cognito → AgentCore callback (AgentCore exchanges code for tokens)
-2. AgentCore → App callback (App receives session_id, calls CompleteResourceTokenAuth)
+Note: OAuth2 completion is handled by the frontend via @aws-sdk/client-bedrock-agentcore's
+CompleteResourceTokenAuthCommand. The backend only handles workload tokens for agent operations.
 """
 
 import os
@@ -17,9 +13,7 @@ from typing import Optional
 
 from bedrock_agentcore.services.identity import IdentityClient as AgentCoreIdentityClient
 
-from shared.models.auth import OAuth2CompletionResult, WorkloadToken
-from shared.models.oauth2_session import OAuth2SessionStatus
-from shared.services.dynamodb import get_dynamodb_service
+from shared.models.auth import WorkloadToken
 
 
 class IdentityClient:
@@ -150,70 +144,6 @@ class IdentityClient:
     def clear_cache(self) -> None:
         """Clear all cached tokens (useful for testing)."""
         self._token_cache.clear()
-
-    def complete_oauth2(
-        self,
-        session_id: str,
-        user_email: str,
-    ) -> OAuth2CompletionResult:
-        """Complete OAuth2 3LO flow with user identity verification.
-
-        This method:
-        1. Looks up the OAuth2 session by session_id
-        2. Verifies user_email matches the stored guest_email
-        3. Calls AgentCore CompleteResourceTokenAuth if verified
-        4. Updates session status to COMPLETED or FAILED
-
-        This is called by the callback handler after receiving session_id from AgentCore.
-
-        Args:
-            session_id: Session URI from AgentCore callback
-            user_email: Email of the user completing auth (from Cognito)
-
-        Returns:
-            OAuth2CompletionResult indicating success or failure with error code
-        """
-        db = get_dynamodb_service()
-
-        # Step 1: Look up session
-        session = db.get_oauth2_session(session_id)
-        if session is None:
-            return OAuth2CompletionResult(
-                success=False,
-                error_code="SESSION_NOT_FOUND",
-                message=f"OAuth2 session {session_id} not found",
-            )
-
-        # Step 2: Verify user identity matches
-        if user_email != session.guest_email:
-            db.update_oauth2_session_status(session_id, OAuth2SessionStatus.FAILED)
-            return OAuth2CompletionResult(
-                success=False,
-                error_code="USER_MISMATCH",
-                message="OAuth2 user does not match session initiator",
-            )
-
-        # Step 3: Call AgentCore to complete the auth
-        try:
-            self._sdk_client.complete_resource_token_auth(
-                session_uri=session_id,
-                user_identifier=user_email,
-            )
-        except Exception as e:
-            db.update_oauth2_session_status(session_id, OAuth2SessionStatus.FAILED)
-            return OAuth2CompletionResult(
-                success=False,
-                error_code="AGENTCORE_ERROR",
-                message=f"AgentCore completion failed: {e}",
-            )
-
-        # Step 4: Update session status to completed
-        db.update_oauth2_session_status(session_id, OAuth2SessionStatus.COMPLETED)
-
-        return OAuth2CompletionResult(
-            success=True,
-            message="OAuth2 authentication completed successfully",
-        )
 
 
 # Module-level singleton for performance (similar to DynamoDBService pattern)

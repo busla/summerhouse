@@ -132,33 +132,56 @@ module "lambda" {
   attach_policy_json = true
   policy_json = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "DynamoDBOAuth2Sessions"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-          "dynamodb:Query"
-        ]
-        Resource = [
-          var.oauth2_sessions_table_arn,
-          "${var.oauth2_sessions_table_arn}/index/*"
-        ]
-      },
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:*"
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Sid    = "DynamoDBOAuth2Sessions"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query"
+          ]
+          Resource = [
+            var.oauth2_sessions_table_arn,
+            "${var.oauth2_sessions_table_arn}/index/*"
+          ]
+        },
+        {
+          Sid    = "CloudWatchLogs"
+          Effect = "Allow"
+          Action = [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+          ]
+          Resource = "arn:aws:logs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:*"
+        }
+      ],
+      # Additional DynamoDB tables for API routes (booking tables)
+      length(var.dynamodb_table_arns) > 0 ? [
+        {
+          Sid    = "DynamoDBBookingTables"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query",
+            "dynamodb:Scan",
+            "dynamodb:BatchGetItem",
+            "dynamodb:BatchWriteItem"
+          ]
+          Resource = concat(
+            var.dynamodb_table_arns,
+            [for arn in var.dynamodb_table_arns : "${arn}/index/*"]
+          )
+        }
+      ] : []
+    )
   })
 
   tags = module.label.tags

@@ -558,6 +558,9 @@ module "gateway_v2" {
   oauth2_sessions_table_name = module.dynamodb.oauth2_sessions_table_name
   oauth2_sessions_table_arn  = module.dynamodb.oauth2_sessions_table_arn
 
+  # Additional DynamoDB tables for API routes (booking data)
+  dynamodb_table_arns = module.dynamodb.table_arns
+
   # Cognito configuration (for JWT validation in callback)
   cognito_user_pool_id = module.cognito.user_pool_id
   cognito_client_id    = module.cognito.client_id

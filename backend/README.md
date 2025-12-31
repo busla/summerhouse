@@ -72,12 +72,24 @@ Deployed to AWS Lambda via API Gateway:
 ```
 api/src/api/
 ├── main.py          # FastAPI app + Mangum handler
-├── routes/          # API routers
-│   ├── auth.py      # /auth/* endpoints
-│   └── health.py    # /health endpoint
+├── routes/          # API routers (21 endpoints across 8 modules)
+│   ├── health.py        # /health endpoint
+│   ├── availability.py  # /availability, /availability/calendar/{month}
+│   ├── pricing.py       # /pricing, /pricing/calculate, /pricing/rates, /pricing/minimum-stay
+│   ├── reservations.py  # CRUD for reservations (JWT required for create/modify/delete)
+│   ├── payments.py      # Payment processing (JWT required)
+│   ├── guests.py        # Email verification, profile management
+│   ├── property.py      # /property, /property/photos
+│   └── area.py          # /area, /area/recommendations
+├── models/          # Pydantic request/response models
 ├── middleware/      # Request/response middleware
 └── scripts/         # OpenAPI generation
 ```
+
+**API Authentication:**
+- Public endpoints: availability, pricing, property, area info
+- JWT required: create/modify/cancel reservations, payments, guest profile updates
+- API Gateway validates JWT and passes user identity via `x-user-sub` header
 
 ### `agent/` - Strands Agent
 

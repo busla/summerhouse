@@ -129,6 +129,13 @@ class PricingService:
 
     def _item_to_pricing(self, item: dict[str, Any]) -> Pricing:
         """Convert DynamoDB item to Pricing model."""
+        # Handle is_active as string or boolean (DynamoDB may store as either)
+        is_active_raw = item.get("is_active", True)
+        if isinstance(is_active_raw, str):
+            is_active = is_active_raw.lower() == "true"
+        else:
+            is_active = bool(is_active_raw)
+
         return Pricing(
             season_id=item["season_id"],
             season_name=item["season_name"],
@@ -137,7 +144,7 @@ class PricingService:
             nightly_rate=int(item["nightly_rate"]),
             minimum_nights=int(item["minimum_nights"]),
             cleaning_fee=int(item["cleaning_fee"]),
-            is_active=item.get("is_active", True),
+            is_active=is_active,
         )
 
     def create_season(self, pricing: Pricing) -> bool:

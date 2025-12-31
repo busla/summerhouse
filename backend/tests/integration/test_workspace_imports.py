@@ -111,9 +111,8 @@ class TestApiPackageImports:
 
     def test_can_import_routes(self):
         """Route modules should be importable."""
-        from api.routes import auth, health
+        from api.routes import health
 
-        assert hasattr(auth, "router") or hasattr(auth, "get_session")
         assert hasattr(health, "router") or hasattr(health, "ping")
 
 

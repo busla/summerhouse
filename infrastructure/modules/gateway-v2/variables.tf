@@ -76,6 +76,13 @@ variable "oauth2_sessions_table_arn" {
   type        = string
 }
 
+# Additional DynamoDB tables for API routes
+variable "dynamodb_table_arns" {
+  description = "List of DynamoDB table ARNs for API routes (reservations, guests, availability, etc.)"
+  type        = list(string)
+  default     = []
+}
+
 # Cognito configuration
 variable "cognito_user_pool_id" {
   description = "Cognito User Pool ID for authentication"
