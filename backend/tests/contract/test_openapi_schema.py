@@ -193,32 +193,33 @@ class TestRouteSecurityClassification:
     def test_public_routes_have_empty_security(self, generated_openapi: dict) -> None:
         """Public routes must have security: []."""
         # Public routes that don't require JWT authentication
+        # Note: Routes are at root level; REST API stage 'api' provides /api prefix
         public_routes = [
             # Health/ping
-            ("get", "/api/ping"),
-            ("get", "/api/health"),
+            ("get", "/ping"),
+            ("get", "/health"),
             # Availability (public inquiry)
-            ("get", "/api/availability"),
-            ("get", "/api/availability/calendar/{month}"),
+            ("get", "/availability"),
+            ("get", "/availability/calendar/{month}"),
             # Pricing (public inquiry)
-            ("get", "/api/pricing"),
-            ("get", "/api/pricing/rates"),
-            ("get", "/api/pricing/minimum-stay"),
-            ("get", "/api/pricing/minimum-stay/{date}"),
-            ("get", "/api/pricing/calculate"),
+            ("get", "/pricing"),
+            ("get", "/pricing/rates"),
+            ("get", "/pricing/minimum-stay"),
+            ("get", "/pricing/minimum-stay/{date}"),
+            ("get", "/pricing/calculate"),
             # Property (public info)
-            ("get", "/api/property"),
-            ("get", "/api/property/photos"),
+            ("get", "/property"),
+            ("get", "/property/photos"),
             # Area (public info)
-            ("get", "/api/area"),
-            ("get", "/api/area/recommendations"),
+            ("get", "/area"),
+            ("get", "/area/recommendations"),
             # Guest verification (public to initiate)
-            ("post", "/api/guests/verify"),
-            ("post", "/api/guests/verify/confirm"),
+            ("post", "/guests/verify"),
+            ("post", "/guests/verify/confirm"),
             # Reservation lookup by ID (public for status check)
-            ("get", "/api/reservations/{reservation_id}"),
+            ("get", "/reservations/{reservation_id}"),
             # Payment status lookup (public for status check)
-            ("get", "/api/payments/{reservation_id}"),
+            ("get", "/payments/{reservation_id}"),
         ]
 
         for method, path in public_routes:
@@ -234,18 +235,19 @@ class TestRouteSecurityClassification:
     def test_protected_routes_have_jwt_security(self, generated_openapi: dict) -> None:
         """Protected routes must require cognito-jwt authentication."""
         # Routes that require JWT authentication
+        # Note: Routes are at root level; REST API stage 'api' provides /api prefix
         protected_routes = [
             # Guest profile (owner only)
-            ("get", "/api/guests/{email}"),
-            ("patch", "/api/guests/{guest_id}"),
+            ("get", "/guests/by-email/{email}"),
+            ("patch", "/guests/{guest_id}"),
             # Reservations (authenticated operations)
-            ("get", "/api/reservations"),  # List user's own reservations
-            ("post", "/api/reservations"),
-            ("patch", "/api/reservations/{reservation_id}"),
-            ("delete", "/api/reservations/{reservation_id}"),
+            ("get", "/reservations"),  # List user's own reservations
+            ("post", "/reservations"),
+            ("patch", "/reservations/{reservation_id}"),
+            ("delete", "/reservations/{reservation_id}"),
             # Payments (authenticated operations)
-            ("post", "/api/payments"),
-            ("post", "/api/payments/{reservation_id}/retry"),
+            ("post", "/payments"),
+            ("post", "/payments/{reservation_id}/retry"),
         ]
 
         for method, path in protected_routes:
@@ -302,55 +304,56 @@ class TestAllEndpointsExist:
     """
 
     # All expected endpoints organized by domain
+    # Note: Routes are at root level; REST API stage 'api' provides /api prefix in URL
     EXPECTED_ENDPOINTS = {
         # Health & System
         "health": [
-            ("get", "/api/ping"),
-            ("get", "/api/health"),
+            ("get", "/ping"),
+            ("get", "/health"),
         ],
         # US1: Availability
         "availability": [
-            ("get", "/api/availability"),
-            ("get", "/api/availability/calendar/{month}"),
+            ("get", "/availability"),
+            ("get", "/availability/calendar/{month}"),
         ],
         # US2: Pricing
         "pricing": [
-            ("get", "/api/pricing"),
-            ("get", "/api/pricing/rates"),
-            ("get", "/api/pricing/minimum-stay"),
-            ("get", "/api/pricing/minimum-stay/{date}"),
-            ("get", "/api/pricing/calculate"),
+            ("get", "/pricing"),
+            ("get", "/pricing/rates"),
+            ("get", "/pricing/minimum-stay"),
+            ("get", "/pricing/minimum-stay/{date}"),
+            ("get", "/pricing/calculate"),
         ],
         # US3: Reservations
         "reservations": [
-            ("get", "/api/reservations"),
-            ("post", "/api/reservations"),
-            ("get", "/api/reservations/{reservation_id}"),
-            ("patch", "/api/reservations/{reservation_id}"),
-            ("delete", "/api/reservations/{reservation_id}"),
+            ("get", "/reservations"),
+            ("post", "/reservations"),
+            ("get", "/reservations/{reservation_id}"),
+            ("patch", "/reservations/{reservation_id}"),
+            ("delete", "/reservations/{reservation_id}"),
         ],
         # US4: Payments
         "payments": [
-            ("post", "/api/payments"),
-            ("get", "/api/payments/{reservation_id}"),
-            ("post", "/api/payments/{reservation_id}/retry"),
+            ("post", "/payments"),
+            ("get", "/payments/{reservation_id}"),
+            ("post", "/payments/{reservation_id}/retry"),
         ],
         # US5: Guests
         "guests": [
-            ("post", "/api/guests/verify"),
-            ("post", "/api/guests/verify/confirm"),
-            ("get", "/api/guests/{email}"),
-            ("patch", "/api/guests/{guest_id}"),
+            ("post", "/guests/verify"),
+            ("post", "/guests/verify/confirm"),
+            ("get", "/guests/by-email/{email}"),
+            ("patch", "/guests/{guest_id}"),
         ],
         # US6: Property
         "property": [
-            ("get", "/api/property"),
-            ("get", "/api/property/photos"),
+            ("get", "/property"),
+            ("get", "/property/photos"),
         ],
         # US7: Area
         "area": [
-            ("get", "/api/area"),
-            ("get", "/api/area/recommendations"),
+            ("get", "/area"),
+            ("get", "/area/recommendations"),
         ],
     }
 
@@ -373,12 +376,15 @@ class TestAllEndpointsExist:
             len(endpoints) for endpoints in self.EXPECTED_ENDPOINTS.values()
         )
         # Count actual endpoints (excluding framework routes like /docs, /openapi.json)
+        # Routes are at root level; REST API stage 'api' provides /api prefix in URL
         actual_count = 0
         for path, path_item in generated_openapi.get("paths", {}).items():
-            if path.startswith("/api/"):  # Only count /api/ routes
-                for method in ["get", "post", "put", "delete", "patch"]:
-                    if method in path_item:
-                        actual_count += 1
+            # Skip OpenAPI framework routes
+            if path in ["/docs", "/openapi.json", "/redoc"]:
+                continue
+            for method in ["get", "post", "put", "delete", "patch"]:
+                if method in path_item:
+                    actual_count += 1
 
         assert actual_count >= expected_count, (
             f"Expected at least {expected_count} endpoints, found {actual_count}"

@@ -40,8 +40,10 @@ locals {
   s3_origin_id  = "${module.label.id}-s3-origin"
   api_origin_id = "${module.label.id}-api-origin"
 
-  # Parse API Gateway domain from URL (e.g., "abc123.execute-api.eu-west-1.amazonaws.com")
-  api_gateway_domain = var.api_gateway_url != null ? replace(var.api_gateway_url, "/^https?:\\/\\//", "") : null
+  # Parse API Gateway domain from URL (e.g., "https://abc123.execute-api.eu-west-1.amazonaws.com/api")
+  # REST API URLs include stage path (/api), HTTP API URLs don't - we need just the domain
+  # Regex extracts domain between protocol and first slash/end: "https://domain/path" -> "domain"
+  api_gateway_domain = var.api_gateway_url != null ? regex("^https?://([^/]+)", var.api_gateway_url)[0] : null
 }
 
 data "aws_region" "current" {}

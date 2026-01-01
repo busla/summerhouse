@@ -113,3 +113,15 @@ variable "enable_openapi_generation" {
   type        = bool
   default     = true
 }
+
+# REST API stage name
+variable "stage_name" {
+  description = "REST API stage name (CloudFront origin path abstracts this from end users)"
+  type        = string
+  default     = "api"
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_]+$", var.stage_name))
+    error_message = "Stage name must contain only alphanumeric characters and underscores."
+  }
+}

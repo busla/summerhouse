@@ -1,8 +1,8 @@
 """Unit tests for property API routes.
 
 Tests for:
-- GET /api/property - Property details
-- GET /api/property/photos - Property photos with filtering
+- GET /property - Property details
+- GET /property/photos - Property photos with filtering
 """
 
 import pytest
@@ -19,11 +19,11 @@ def client() -> TestClient:
 
 
 class TestGetPropertyDetails:
-    """Tests for GET /api/property endpoint."""
+    """Tests for GET /property endpoint."""
 
     def test_returns_property_details(self, client: TestClient) -> None:
         """Should return property details with all fields."""
-        response = client.get("/api/property")
+        response = client.get("/property")
         assert response.status_code == HTTP_200_OK
 
         data = response.json()
@@ -41,7 +41,7 @@ class TestGetPropertyDetails:
 
     def test_property_has_address_info(self, client: TestClient) -> None:
         """Property should include address details."""
-        response = client.get("/api/property")
+        response = client.get("/property")
         assert response.status_code == HTTP_200_OK
 
         address = response.json()["property"]["address"]
@@ -51,17 +51,17 @@ class TestGetPropertyDetails:
 
     def test_property_max_guests_is_4(self, client: TestClient) -> None:
         """Property max guests should be 4 per spec."""
-        response = client.get("/api/property")
+        response = client.get("/property")
         assert response.status_code == HTTP_200_OK
         assert response.json()["property"]["max_guests"] == 4
 
 
 class TestGetPropertyPhotos:
-    """Tests for GET /api/property/photos endpoint."""
+    """Tests for GET /property/photos endpoint."""
 
     def test_returns_photos_list(self, client: TestClient) -> None:
         """Should return list of photos."""
-        response = client.get("/api/property/photos")
+        response = client.get("/property/photos")
         assert response.status_code == HTTP_200_OK
 
         data = response.json()
@@ -71,7 +71,7 @@ class TestGetPropertyPhotos:
 
     def test_photos_have_required_fields(self, client: TestClient) -> None:
         """Each photo should have required fields."""
-        response = client.get("/api/property/photos")
+        response = client.get("/property/photos")
         assert response.status_code == HTTP_200_OK
 
         photos = response.json()["photos"]
@@ -84,7 +84,7 @@ class TestGetPropertyPhotos:
 
     def test_filter_by_category(self, client: TestClient) -> None:
         """Should filter photos by category."""
-        response = client.get("/api/property/photos?category=exterior")
+        response = client.get("/property/photos?category=exterior")
         assert response.status_code == HTTP_200_OK
 
         data = response.json()
@@ -95,12 +95,12 @@ class TestGetPropertyPhotos:
 
     def test_invalid_category_returns_400(self, client: TestClient) -> None:
         """Invalid category should return 400 error."""
-        response = client.get("/api/property/photos?category=invalid_category")
+        response = client.get("/property/photos?category=invalid_category")
         assert response.status_code == HTTP_400_BAD_REQUEST
 
     def test_limit_parameter(self, client: TestClient) -> None:
         """Limit parameter should cap results."""
-        response = client.get("/api/property/photos?limit=2")
+        response = client.get("/property/photos?limit=2")
         assert response.status_code == HTTP_200_OK
 
         photos = response.json()["photos"]
@@ -108,7 +108,7 @@ class TestGetPropertyPhotos:
 
     def test_limit_with_category(self, client: TestClient) -> None:
         """Limit should work with category filter."""
-        response = client.get("/api/property/photos?category=bedroom&limit=1")
+        response = client.get("/property/photos?category=bedroom&limit=1")
         assert response.status_code == HTTP_200_OK
 
         data = response.json()
@@ -118,7 +118,7 @@ class TestGetPropertyPhotos:
 
     def test_photos_sorted_by_display_order(self, client: TestClient) -> None:
         """Photos should be sorted by display_order."""
-        response = client.get("/api/property/photos")
+        response = client.get("/property/photos")
         assert response.status_code == HTTP_200_OK
 
         photos = response.json()["photos"]
