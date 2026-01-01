@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
+from api.docs import router as docs_router
 from api.exceptions import register_exception_handlers
 from api.routes.area import router as area_router
 from api.routes.availability import router as availability_router
@@ -34,6 +35,10 @@ app = FastAPI(
     title="Booking Platform API",
     description="REST API for authentication and booking operations",
     version="0.1.0",
+    # Disable default docs - we serve gateway-patched OpenAPI via custom endpoints
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # Configure CORS for local development
@@ -48,23 +53,25 @@ app.add_middleware(
 # Register exception handlers for consistent error responses
 register_exception_handlers(app)
 
-# Include routers under /api prefix
-# This matches CloudFront routing: /api/* → API Gateway
-app.include_router(health_router, prefix="/api")
-app.include_router(availability_router, prefix="/api")
-app.include_router(pricing_router, prefix="/api")
-app.include_router(reservations_router, prefix="/api")
-app.include_router(payments_router, prefix="/api")
-app.include_router(guests_router, prefix="/api")
-app.include_router(property_router, prefix="/api")
-app.include_router(area_router, prefix="/api")
+# Include routers at root level
+# REST API stage name 'api' provides the /api prefix in the URL
+# Final URL: https://xxx.execute-api.region.amazonaws.com/api/health
+app.include_router(docs_router)
+app.include_router(health_router)
+app.include_router(availability_router)
+app.include_router(pricing_router)
+app.include_router(reservations_router)
+app.include_router(payments_router)
+app.include_router(guests_router)
+app.include_router(property_router)
+app.include_router(area_router)
 
 
-@app.get("/api/ping")
+@app.get("/ping")
 async def ping() -> dict[str, Any]:
-    """Root health check endpoint at /api/ping.
+    """Root health check endpoint.
 
-    Matches CloudFront path pattern /api/* → API Gateway.
+    With REST API stage 'api', accessible at /api/ping.
     """
     return {
         "status": "ok",

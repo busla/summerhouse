@@ -1,6 +1,6 @@
 # Booking: Agent-First Vacation Rental Booking Platform
 
-Auto-generated from feature plans. Last updated: 2025-12-28
+Auto-generated from feature plans. Last updated: 2025-12-31
 
 ## Project Overview
 
@@ -459,9 +459,11 @@ This project follows the Booking Constitution (v1.1.0):
 - AWS API Gateway HTTP API (OpenAPI-provisioned), AWS Cognito JWT authorizer (006-backend-workspace-openapi)
 - Python 3.13+ + FastAPI, Pydantic v2 strict mode; pytest + moto (testing) (007-tools-api-endpoints)
 - DynamoDB (6 tables), AWS API Gateway HTTP API with JWT authorizer (007-tools-api-endpoints)
+- HCL (Terraform >= 1.5.0) + cloudposse/label/null ~> 0.25, terraform-aws-modules/lambda/aws ~> 8.1; Python 3.13 (OpenAPI generation) (008-rest-api-gateway)
+- AWS API Gateway REST API (OpenAPI-provisioned), Cognito User Pools authorizer, explicit deployment/stage resources (008-rest-api-gateway)
 
 ## Recent Changes
+- 008-rest-api-gateway: Migrate gateway-v2 module from HTTP API to REST API; Cognito User Pools authorizer, explicit OPTIONS methods for CORS, deployment triggers
 - 007-tools-api-endpoints: 21 REST endpoints exposing Strands agent tools; reuses shared/services layer; marker-based JWT auth for OpenAPI generation
 - 006-backend-workspace-openapi: Restructured backend into UV workspace (agent, api, shared); API Gateway provisioned via OpenAPI with JWT authorizer
 - 004-jwt-session-auth: Added JWT token delivery from backend to frontend, TokenDeliveryEvent in tool responses, auth_token in transport payload
-- 002-static-website-waf: Added HCL (Terraform >= 1.5.0) + cloudposse/waf/aws v1.17.0, cloudposse/label/null ~> 0.25, terraform-aws-modules/cloudfront/aws ~> 6.0

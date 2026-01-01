@@ -40,8 +40,10 @@ locals {
   s3_origin_id  = "${module.label.id}-s3-origin"
   api_origin_id = "${module.label.id}-api-origin"
 
-  # Parse API Gateway domain from URL (e.g., "abc123.execute-api.eu-west-1.amazonaws.com")
-  api_gateway_domain = var.api_gateway_url != null ? replace(var.api_gateway_url, "/^https?:\\/\\//", "") : null
+  # Parse API Gateway domain from URL (e.g., "https://abc123.execute-api.eu-west-1.amazonaws.com/api")
+  # REST API URLs include stage path (/api), HTTP API URLs don't - we need just the domain
+  # Regex extracts domain between protocol and first slash/end: "https://domain/path" -> "domain"
+  api_gateway_domain = var.api_gateway_url != null ? regex("^https?://([^/]+)", var.api_gateway_url)[0] : null
 }
 
 data "aws_region" "current" {}
@@ -162,10 +164,13 @@ module "cloudfront" {
     cached_methods  = ["GET", "HEAD"]
     compress        = true
 
-    # Use managed cache policy for simple static content
-    use_forwarded_values = true
-    query_string         = false
-    cookies_forward      = "none"
+    # Use forwarded_values for simple static content (legacy but explicit control)
+    forwarded_values = {
+      query_string = false
+      cookies = {
+        forward = "none"
+      }
+    }
 
     min_ttl     = 0
     default_ttl = 3600  # 1 hour
@@ -185,11 +190,15 @@ module "cloudfront" {
         cached_methods  = ["GET", "HEAD"]
         compress        = true
 
-        # Forward all headers/cookies for API calls (no caching)
-        use_forwarded_values = true
-        query_string         = true
-        cookies_forward      = "all"
-        headers              = ["Authorization", "Origin", "Accept", "Content-Type"]
+        # Forward all headers/cookies/query strings for API calls (no caching)
+        # Must use nested forwarded_values block per terraform-aws-modules/cloudfront syntax
+        forwarded_values = {
+          query_string = true
+          cookies = {
+            forward = "all"
+          }
+          headers = ["Authorization", "Origin", "Accept", "Content-Type"]
+        }
 
         min_ttl     = 0
         default_ttl = 0
@@ -207,9 +216,12 @@ module "cloudfront" {
         cached_methods  = ["GET", "HEAD"]
         compress        = true
 
-        use_forwarded_values = true
-        query_string         = false
-        cookies_forward      = "none"
+        forwarded_values = {
+          query_string = false
+          cookies = {
+            forward = "none"
+          }
+        }
 
         min_ttl     = 0
         default_ttl = 31536000 # 1 year

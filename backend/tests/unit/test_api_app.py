@@ -20,7 +20,7 @@ class TestHealthCheck:
 
     def test_ping_returns_ok(self, client: TestClient):
         """Health check should return ok status."""
-        response = client.get("/api/ping")
+        response = client.get("/ping")
 
         assert response.status_code == 200
         data = response.json()
@@ -30,7 +30,7 @@ class TestHealthCheck:
 
     def test_health_endpoint_returns_healthy(self, client: TestClient):
         """Health router endpoint should return healthy status."""
-        response = client.get("/api/health")
+        response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -64,5 +64,6 @@ class TestRoutesRegistered:
 
         route_paths = [route.path for route in app.routes]
 
-        # Health routes should be registered (mounted with /api prefix)
-        assert "/api/health" in route_paths or "/api/ping" in route_paths
+        # Health routes should be registered at root level
+        # (REST API stage 'api' provides /api prefix in URL)
+        assert "/health" in route_paths or "/ping" in route_paths

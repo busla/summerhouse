@@ -200,7 +200,7 @@ module "lambda" {
 
 locals {
   # Compute Lambda ARN without depending on Lambda module output (breaks dependency cycle)
-  lambda_function_arn = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${module.label.id}"
+  lambda_function_arn = "arn:aws:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${module.label.id}"
 }
 
 data "external" "openapi" {
@@ -218,47 +218,98 @@ data "external" "openapi" {
     cognito_user_pool_id = var.cognito_user_pool_id
     cognito_client_id    = var.cognito_client_id
     cors_allow_origins   = jsonencode(var.cors_allow_origins)
+    # REST API parameters (T013)
+    api_type             = "rest"
+    aws_account_id       = data.aws_caller_identity.current.account_id
   }
 }
 
 # -----------------------------------------------------------------------------
-# API Gateway HTTP API
+# API Gateway REST API (T014)
 # -----------------------------------------------------------------------------
-# When OpenAPI generation is enabled, routes/integrations come from the spec body.
-# When disabled (legacy mode), uses catch-all routing with explicit integration.
+# Migrated from HTTP API to REST API for CloudFront Origin Path compatibility.
+# Routes/integrations/authorizers defined via OpenAPI body with AWS extensions.
+# CORS handled via explicit OPTIONS methods in OpenAPI (not x-amazon-apigateway-cors).
 
-resource "aws_apigatewayv2_api" "main" {
-  name          = module.label.id
-  protocol_type = "HTTP"
-  description   = "HTTP API for Booking FastAPI Lambda"
+resource "aws_api_gateway_rest_api" "main" {
+  name        = module.label.id
+  description = "REST API for Booking FastAPI Lambda"
 
-  # Use OpenAPI body when enabled, otherwise use inline CORS
+  # OpenAPI body defines routes, integrations, and Cognito authorizer
   body = var.enable_openapi_generation ? data.external.openapi[0].result.openapi_spec : null
 
-  # CORS configuration only used when NOT using OpenAPI body
-  # (OpenAPI body includes x-amazon-apigateway-cors)
-  dynamic "cors_configuration" {
-    for_each = var.enable_openapi_generation ? [] : [1]
-    content {
-      allow_origins = var.cors_allow_origins
-      allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
-      allow_headers = ["Content-Type", "Authorization", "X-Requested-With", "X-Amz-Date"]
-      max_age       = 86400
-    }
+  # Required for REST API with OpenAPI body - ensures spec overwrites existing config
+  put_rest_api_mode = "overwrite"
+
+  endpoint_configuration {
+    types = ["REGIONAL"]
   }
 
   tags = module.label.tags
+}
 
-  # Force replacement when OpenAPI spec changes
+# -----------------------------------------------------------------------------
+# API Gateway Deployment (T015)
+# -----------------------------------------------------------------------------
+# REST API requires explicit deployment resource (unlike HTTP API auto_deploy).
+# SHA1 trigger ensures new deployment when OpenAPI spec changes.
+
+resource "aws_api_gateway_deployment" "main" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+
+  # Trigger redeployment when OpenAPI body changes
+  triggers = {
+    redeployment = sha1(jsonencode(aws_api_gateway_rest_api.main.body))
+  }
+
   lifecycle {
     create_before_destroy = true
   }
 }
 
-resource "aws_apigatewayv2_stage" "default" {
-  api_id      = aws_apigatewayv2_api.main.id
-  name        = "$default"
-  auto_deploy = true
+# -----------------------------------------------------------------------------
+# CloudWatch Logging IAM Role (T024-T026)
+# -----------------------------------------------------------------------------
+# REST API requires an account-level IAM role for CloudWatch logging.
+# This role is shared across all REST APIs in the AWS account.
+
+resource "aws_iam_role" "api_gateway_cloudwatch" {
+  name = "${module.label.id}-apigw-cloudwatch"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "apigateway.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = module.label.tags
+}
+
+resource "aws_iam_role_policy_attachment" "api_gateway_cloudwatch" {
+  role       = aws_iam_role.api_gateway_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "main" {
+  cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch.arn
+}
+
+# -----------------------------------------------------------------------------
+# API Gateway Stage (T016)
+# -----------------------------------------------------------------------------
+# REST API uses named stages (not $default). Stage name abstracted by CloudFront.
+
+resource "aws_api_gateway_stage" "main" {
+  deployment_id = aws_api_gateway_deployment.main.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  stage_name    = var.stage_name
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway.arn
@@ -267,7 +318,7 @@ resource "aws_apigatewayv2_stage" "default" {
       ip             = "$context.identity.sourceIp"
       requestTime    = "$context.requestTime"
       httpMethod     = "$context.httpMethod"
-      routeKey       = "$context.routeKey"
+      resourcePath   = "$context.resourcePath"
       status         = "$context.status"
       responseLength = "$context.responseLength"
       errorMessage   = "$context.error.message"
@@ -275,6 +326,8 @@ resource "aws_apigatewayv2_stage" "default" {
   }
 
   tags = module.label.tags
+
+  depends_on = [aws_api_gateway_account.main]
 }
 
 resource "aws_cloudwatch_log_group" "api_gateway" {
@@ -285,33 +338,15 @@ resource "aws_cloudwatch_log_group" "api_gateway" {
 }
 
 # -----------------------------------------------------------------------------
-# Legacy Mode: Explicit Lambda integration and catch-all route
-# Only created when NOT using OpenAPI generation
+# Lambda Permission (T017)
 # -----------------------------------------------------------------------------
+# REST API source_arn uses /*/* pattern: /{stage}/*/{resource-path}
+# This allows the API to invoke Lambda for any method on any resource.
 
-resource "aws_apigatewayv2_integration" "lambda" {
-  count = var.enable_openapi_generation ? 0 : 1
-
-  api_id                 = aws_apigatewayv2_api.main.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = module.lambda.lambda_function_arn
-  integration_method     = "POST"
-  payload_format_version = "2.0"
-}
-
-resource "aws_apigatewayv2_route" "default" {
-  count = var.enable_openapi_generation ? 0 : 1
-
-  api_id    = aws_apigatewayv2_api.main.id
-  route_key = "$default"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda[0].id}"
-}
-
-# Lambda permission for API Gateway (needed in both modes)
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = module.lambda.lambda_function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.main.execution_arn}/*/*"
+  source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/*/*"
 }

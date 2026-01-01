@@ -91,5 +91,5 @@ output "user_pool_domain" {
 
 output "user_pool_domain_url" {
   description = "Cognito User Pool full domain URL for OAuth2 flows"
-  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.id}.amazoncognito.com"
 }

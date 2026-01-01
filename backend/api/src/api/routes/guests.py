@@ -251,7 +251,7 @@ async def verify_code(
 
 
 @router.get(
-    "/guests/{email}",
+    "/guests/by-email/{email}",
     summary="Get guest by email",
     description="""
 Get guest information by email address.

@@ -101,7 +101,7 @@ resource "aws_cognito_user_pool" "main" {
     for_each = var.ses_email_identity != "" ? [1] : []
     content {
       email_sending_account  = "DEVELOPER"
-      source_arn             = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
+      source_arn             = "arn:aws:ses:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
       from_email_address     = var.ses_from_email != "" ? var.ses_from_email : "no-reply@${var.ses_email_identity}"
       reply_to_email_address = var.ses_from_email != "" ? var.ses_from_email : "no-reply@${var.ses_email_identity}"
     }
@@ -135,7 +135,7 @@ resource "aws_ses_identity_policy" "cognito_sending" {
           "ses:SendEmail",
           "ses:SendRawEmail"
         ]
-        Resource = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
+        Resource = "arn:aws:ses:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_email_identity}"
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id

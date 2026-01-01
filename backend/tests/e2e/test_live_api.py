@@ -3,10 +3,19 @@
 Run with: pytest tests/e2e/ -v
 
 Configure the API URL via environment variable:
-  export E2E_API_BASE_URL="https://9jwf4z2k1k.execute-api.eu-west-1.amazonaws.com"
+  export E2E_API_BASE_URL="https://booking.levy.apro.work/api"
 
 Or via pytest command line:
   E2E_API_BASE_URL="https://..." pytest tests/e2e/ -v
+
+The default URL uses CloudFront (via custom domain) which routes /api/* to API Gateway.
+This tests the full production stack including:
+- CloudFront CDN and caching behavior
+- WAF rules (IP allowlist required)
+- API Gateway REST API integration
+
+For testing without WAF restrictions, use the direct API Gateway URL:
+  E2E_API_BASE_URL="https://{api-id}.execute-api.{region}.amazonaws.com/api"
 
 Markers:
   - e2e: All end-to-end tests
@@ -21,7 +30,9 @@ import httpx
 import pytest
 
 # API base URL - can be overridden via environment variable
-DEFAULT_API_URL = "https://9jwf4z2k1k.execute-api.eu-west-1.amazonaws.com"
+# Default: CloudFront URL via custom domain (tests full production stack)
+# Note: WAF IP allowlist must include the test runner's IP address
+DEFAULT_API_URL = "https://booking.levy.apro.work/api"
 API_BASE_URL = os.environ.get("E2E_API_BASE_URL", DEFAULT_API_URL)
 
 
@@ -51,7 +62,7 @@ class TestHealthEndpoint:
 
     def test_health_returns_200(self, client: httpx.Client) -> None:
         """Health endpoint should return 200 with status healthy."""
-        response = client.get("/api/health")
+        response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
@@ -59,7 +70,7 @@ class TestHealthEndpoint:
 
     def test_health_response_structure(self, client: httpx.Client) -> None:
         """Health response should have expected structure."""
-        response = client.get("/api/health")
+        response = client.get("/health")
         data = response.json()
         assert isinstance(data["status"], str)
         assert isinstance(data["version"], str)
@@ -77,7 +88,7 @@ class TestPropertyEndpoints:
 
     def test_get_property_details(self, client: httpx.Client) -> None:
         """Property endpoint should return apartment details."""
-        response = client.get("/api/property")
+        response = client.get("/property")
         assert response.status_code == 200
         data = response.json()
 
@@ -92,7 +103,7 @@ class TestPropertyEndpoints:
 
     def test_get_property_photos(self, client: httpx.Client) -> None:
         """Property photos endpoint should return photos list."""
-        response = client.get("/api/property/photos")
+        response = client.get("/property/photos")
         assert response.status_code == 200
         data = response.json()
 
@@ -103,7 +114,7 @@ class TestPropertyEndpoints:
 
     def test_get_property_photos_filtered_by_category(self, client: httpx.Client) -> None:
         """Property photos can be filtered by category."""
-        response = client.get("/api/property/photos?category=exterior")
+        response = client.get("/property/photos?category=exterior")
         assert response.status_code == 200
         data = response.json()
 
@@ -114,7 +125,7 @@ class TestPropertyEndpoints:
 
     def test_get_property_photos_invalid_category(self, client: httpx.Client) -> None:
         """Invalid photo category should return 400."""
-        response = client.get("/api/property/photos?category=invalid")
+        response = client.get("/property/photos?category=invalid")
         assert response.status_code == 400
 
 
@@ -130,7 +141,7 @@ class TestAreaEndpoints:
 
     def test_get_area_info(self, client: httpx.Client) -> None:
         """Area endpoint should return local places."""
-        response = client.get("/api/area")
+        response = client.get("/area")
         assert response.status_code == 200
         data = response.json()
 
@@ -140,7 +151,7 @@ class TestAreaEndpoints:
 
     def test_get_area_info_filtered_by_category(self, client: httpx.Client) -> None:
         """Area info can be filtered by category."""
-        response = client.get("/api/area?category=golf")
+        response = client.get("/area?category=golf")
         assert response.status_code == 200
         data = response.json()
 
@@ -151,12 +162,12 @@ class TestAreaEndpoints:
 
     def test_get_area_invalid_category(self, client: httpx.Client) -> None:
         """Invalid area category should return 400."""
-        response = client.get("/api/area?category=invalid")
+        response = client.get("/area?category=invalid")
         assert response.status_code == 400
 
     def test_get_recommendations(self, client: httpx.Client) -> None:
         """Recommendations endpoint should return suggestions."""
-        response = client.get("/api/area/recommendations")
+        response = client.get("/area/recommendations")
         assert response.status_code == 200
         data = response.json()
 
@@ -166,7 +177,7 @@ class TestAreaEndpoints:
 
     def test_get_recommendations_with_interests(self, client: httpx.Client) -> None:
         """Recommendations can be filtered by interests."""
-        response = client.get("/api/area/recommendations?interests=golf,beach&limit=3")
+        response = client.get("/area/recommendations?interests=golf,beach&limit=3")
         assert response.status_code == 200
         data = response.json()
 
@@ -176,7 +187,7 @@ class TestAreaEndpoints:
 
     def test_get_recommendations_with_distance_filter(self, client: httpx.Client) -> None:
         """Recommendations can be filtered by max distance."""
-        response = client.get("/api/area/recommendations?max_distance_km=10")
+        response = client.get("/area/recommendations?max_distance_km=10")
         assert response.status_code == 200
         data = response.json()
 
@@ -197,7 +208,7 @@ class TestPricingEndpoints:
 
     def test_get_current_pricing(self, client: httpx.Client) -> None:
         """Pricing endpoint should return current season pricing."""
-        response = client.get("/api/pricing")
+        response = client.get("/pricing")
         assert response.status_code == 200
         data = response.json()
 
@@ -209,7 +220,7 @@ class TestPricingEndpoints:
 
     def test_get_all_rates(self, client: httpx.Client) -> None:
         """Rates endpoint should return all seasons."""
-        response = client.get("/api/pricing/rates")
+        response = client.get("/pricing/rates")
         assert response.status_code == 200
         data = response.json()
 
@@ -231,7 +242,7 @@ class TestPricingEndpoints:
     ) -> None:
         """Calculate endpoint should return price breakdown."""
         check_in, check_out = future_dates
-        response = client.get(f"/api/pricing/calculate?check_in={check_in}&check_out={check_out}")
+        response = client.get(f"/pricing/calculate?check_in={check_in}&check_out={check_out}")
         # May return 200 or error if dates not in pricing range
         if response.status_code == 200:
             data = response.json()
@@ -245,7 +256,7 @@ class TestPricingEndpoints:
         """Minimum stay validation endpoint should work."""
         check_in, check_out = future_dates
         response = client.get(
-            f"/api/pricing/minimum-stay?check_in={check_in}&check_out={check_out}"
+            f"/pricing/minimum-stay?check_in={check_in}&check_out={check_out}"
         )
         assert response.status_code == 200
         data = response.json()
@@ -255,7 +266,7 @@ class TestPricingEndpoints:
     def test_get_minimum_stay_for_date(self, client: httpx.Client) -> None:
         """Minimum stay for date endpoint should return nights count."""
         future_date = (date.today() + timedelta(days=60)).isoformat()
-        response = client.get(f"/api/pricing/minimum-stay/{future_date}")
+        response = client.get(f"/pricing/minimum-stay/{future_date}")
         # May return 200 or 404 if date not in any season
         if response.status_code == 200:
             data = response.json()
@@ -280,7 +291,7 @@ class TestAvailabilityEndpoints:
         """Availability check should return status."""
         check_in, check_out = future_dates
         response = client.get(
-            f"/api/availability?check_in={check_in}&check_out={check_out}"
+            f"/availability?check_in={check_in}&check_out={check_out}"
         )
         assert response.status_code == 200
         data = response.json()
@@ -292,7 +303,7 @@ class TestAvailabilityEndpoints:
         # Calendar uses /availability/calendar/{month} format (YYYY-MM)
         future_month = date.today() + timedelta(days=60)
         month_str = future_month.strftime("%Y-%m")
-        response = client.get(f"/api/availability/calendar/{month_str}")
+        response = client.get(f"/availability/calendar/{month_str}")
         assert response.status_code == 200
         data = response.json()
         assert "month" in data
@@ -303,7 +314,7 @@ class TestAvailabilityEndpoints:
 
     def test_availability_missing_params(self, client: httpx.Client) -> None:
         """Availability without required params should return 422."""
-        response = client.get("/api/availability")
+        response = client.get("/availability")
         assert response.status_code == 422  # FastAPI validation error
 
 
@@ -323,7 +334,8 @@ class TestProtectedEndpoints:
 
     def test_get_guest_requires_auth(self, client: httpx.Client) -> None:
         """Guest endpoint should require authentication."""
-        response = client.get("/api/guests/GUEST-123")
+        # Note: actual route is /guests/by-email/{email}
+        response = client.get("/guests/by-email/test@example.com")
         # Should return 401 Unauthorized or 403 Forbidden
         assert response.status_code in [401, 403]
         data = response.json()
@@ -332,14 +344,14 @@ class TestProtectedEndpoints:
     def test_update_guest_requires_auth(self, client: httpx.Client) -> None:
         """Guest update should require authentication."""
         response = client.patch(
-            "/api/guests/GUEST-123",
+            "/guests/GUEST-123",
             json={"name": "Test User"},
         )
         assert response.status_code in [401, 403]
 
     def test_get_reservation_not_found(self, client: httpx.Client) -> None:
         """Reservation endpoint is public; returns 404 for non-existent IDs."""
-        response = client.get("/api/reservations/RES-2025-ABC123")
+        response = client.get("/reservations/RES-2025-ABC123")
         assert response.status_code == 404
 
     def test_create_reservation_requires_auth(
@@ -348,7 +360,7 @@ class TestProtectedEndpoints:
         """Reservation creation should require authentication."""
         check_in, check_out = future_dates
         response = client.post(
-            "/api/reservations",
+            "/reservations",
             json={
                 "check_in": check_in,
                 "check_out": check_out,
@@ -363,7 +375,7 @@ class TestProtectedEndpoints:
         """Reservation modification should require authentication."""
         check_in, check_out = future_dates
         response = client.patch(
-            "/api/reservations/RES-2025-ABC123",
+            "/reservations/RES-2025-ABC123",
             json={
                 "check_in": check_in,
                 "check_out": check_out,
@@ -373,18 +385,18 @@ class TestProtectedEndpoints:
 
     def test_cancel_reservation_requires_auth(self, client: httpx.Client) -> None:
         """Reservation cancellation should require authentication."""
-        response = client.delete("/api/reservations/RES-2025-ABC123")
+        response = client.delete("/reservations/RES-2025-ABC123")
         assert response.status_code in [401, 403]
 
     def test_list_reservations_requires_auth(self, client: httpx.Client) -> None:
         """List reservations should require authentication."""
-        response = client.get("/api/reservations?guest_id=GUEST-123")
+        response = client.get("/reservations?guest_id=GUEST-123")
         assert response.status_code in [401, 403]
 
     def test_process_payment_requires_auth(self, client: httpx.Client) -> None:
         """Payment processing should require authentication."""
         response = client.post(
-            "/api/payments",
+            "/payments",
             json={
                 "reservation_id": "RES-2025-ABC123",
                 "amount": 1000,
@@ -395,12 +407,13 @@ class TestProtectedEndpoints:
 
     def test_get_payment_status_not_found(self, client: httpx.Client) -> None:
         """Payment status is public; returns 404 for non-existent IDs."""
-        response = client.get("/api/payments/PAY-2025-ABC123")
+        response = client.get("/payments/PAY-2025-ABC123")
         assert response.status_code == 404
 
     def test_get_payment_by_reservation_not_found(self, client: httpx.Client) -> None:
         """Payment by reservation is public; returns 404 for non-existent reservations."""
-        response = client.get("/api/payments/reservation/RES-2025-ABC123")
+        # Route is /payments/{reservation_id} - takes reservation ID directly
+        response = client.get("/payments/RES-2025-ABC123")
         assert response.status_code == 404
 
 
@@ -415,24 +428,28 @@ class TestErrorHandling:
     """Tests for error handling and edge cases."""
 
     def test_404_for_unknown_route(self, client: httpx.Client) -> None:
-        """Unknown routes should return 404."""
-        response = client.get("/api/unknown/route")
-        assert response.status_code == 404
+        """Unknown routes should return 404 or 403.
+
+        Note: AWS REST API Gateway returns 403 (Forbidden) for undefined routes
+        rather than 404 (Not Found). This is expected API Gateway behavior.
+        """
+        response = client.get("/unknown/route")
+        assert response.status_code in [403, 404]
 
     def test_method_not_allowed(self, client: httpx.Client) -> None:
-        """Wrong HTTP method returns 404 (API Gateway HTTP API behavior)."""
-        response = client.post("/api/health")  # Should be GET
-        # Note: API Gateway HTTP API returns 404 for unregistered method+path combos
+        """Wrong HTTP method returns 404 (API Gateway REST API behavior)."""
+        response = client.post("/health")  # Should be GET
+        # Note: API Gateway REST API returns 403 for unregistered method+path combos
         # (unlike Express/FastAPI standalone which return 405)
-        assert response.status_code in [404, 405]
+        assert response.status_code in [403, 404, 405]
 
     def test_invalid_date_format(self, client: httpx.Client) -> None:
         """Invalid date format should return 422."""
-        response = client.get("/api/availability?check_in=not-a-date&check_out=2025-01-07")
+        response = client.get("/availability?check_in=not-a-date&check_out=2025-01-07")
         assert response.status_code == 422
 
     def test_dates_in_wrong_order(self, client: httpx.Client) -> None:
         """Check-out before check-in should return error."""
-        response = client.get("/api/availability?check_in=2025-01-15&check_out=2025-01-10")
+        response = client.get("/availability?check_in=2025-01-15&check_out=2025-01-10")
         # Should return 400 (bad request) or validation error
         assert response.status_code in [400, 422]

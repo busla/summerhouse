@@ -218,7 +218,7 @@ module "agentcore" {
 
         # AWS region for boto3 clients (DynamoDB, S3, etc.)
         # AgentCore doesn't inject AWS_REGION like Lambda, so we must set it explicitly
-        AWS_DEFAULT_REGION = data.aws_region.current.name
+        AWS_DEFAULT_REGION = data.aws_region.current.id
 
         # DynamoDB table prefix - matches CloudPosse label pattern from dynamodb module
         # Format: namespace-environment-name (where name = "data" in dynamodb module)
