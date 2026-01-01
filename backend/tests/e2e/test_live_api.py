@@ -3,10 +3,19 @@
 Run with: pytest tests/e2e/ -v
 
 Configure the API URL via environment variable:
-  export E2E_API_BASE_URL="https://9jwf4z2k1k.execute-api.eu-west-1.amazonaws.com"
+  export E2E_API_BASE_URL="https://booking.levy.apro.work/api"
 
 Or via pytest command line:
   E2E_API_BASE_URL="https://..." pytest tests/e2e/ -v
+
+The default URL uses CloudFront (via custom domain) which routes /api/* to API Gateway.
+This tests the full production stack including:
+- CloudFront CDN and caching behavior
+- WAF rules (IP allowlist required)
+- API Gateway REST API integration
+
+For testing without WAF restrictions, use the direct API Gateway URL:
+  E2E_API_BASE_URL="https://{api-id}.execute-api.{region}.amazonaws.com/api"
 
 Markers:
   - e2e: All end-to-end tests
@@ -21,8 +30,9 @@ import httpx
 import pytest
 
 # API base URL - can be overridden via environment variable
-# Note: REST API stage name is included in the URL (e.g., /api)
-DEFAULT_API_URL = "https://ppb4s3ngl2.execute-api.eu-west-1.amazonaws.com/api"
+# Default: CloudFront URL via custom domain (tests full production stack)
+# Note: WAF IP allowlist must include the test runner's IP address
+DEFAULT_API_URL = "https://booking.levy.apro.work/api"
 API_BASE_URL = os.environ.get("E2E_API_BASE_URL", DEFAULT_API_URL)
 
 
