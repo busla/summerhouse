@@ -216,6 +216,19 @@ def create_availability(env: str, years: int = 2) -> int:
         (today + timedelta(days=30), today + timedelta(days=33), "RES-2025-TEST002"),
         # Two weeks in summer (July 15-28, 2025)
         (date(2025, 7, 15), date(2025, 7, 28), "RES-2025-TEST003"),
+        # First week of every month in 2026 (for testing unavailable dates in calendar)
+        (date(2026, 1, 1), date(2026, 1, 8), "RES-2026-JAN01"),
+        (date(2026, 2, 1), date(2026, 2, 8), "RES-2026-FEB01"),
+        (date(2026, 3, 1), date(2026, 3, 8), "RES-2026-MAR01"),
+        (date(2026, 4, 1), date(2026, 4, 8), "RES-2026-APR01"),
+        (date(2026, 5, 1), date(2026, 5, 8), "RES-2026-MAY01"),
+        (date(2026, 6, 1), date(2026, 6, 8), "RES-2026-JUN01"),
+        (date(2026, 7, 1), date(2026, 7, 8), "RES-2026-JUL01"),
+        (date(2026, 8, 1), date(2026, 8, 8), "RES-2026-AUG01"),
+        (date(2026, 9, 1), date(2026, 9, 8), "RES-2026-SEP01"),
+        (date(2026, 10, 1), date(2026, 10, 8), "RES-2026-OCT01"),
+        (date(2026, 11, 1), date(2026, 11, 8), "RES-2026-NOV01"),
+        (date(2026, 12, 1), date(2026, 12, 8), "RES-2026-DEC01"),
     ]
 
     # Build set of blocked dates for quick lookup

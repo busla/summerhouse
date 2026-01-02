@@ -18,7 +18,9 @@ class ReservationCreateRequest(BaseModel):
     """
 
     model_config = ConfigDict(
-        strict=True,
+        # Note: strict=False allows string-to-date coercion from JSON
+        # (JSON has no native date type, dates arrive as ISO strings)
+        strict=False,
         json_schema_extra={
             "examples": [
                 {
@@ -72,7 +74,8 @@ class ReservationModifyRequest(BaseModel):
     """
 
     model_config = ConfigDict(
-        strict=True,
+        # Note: strict=False allows string-to-date coercion from JSON
+        strict=False,
         json_schema_extra={
             "examples": [
                 {

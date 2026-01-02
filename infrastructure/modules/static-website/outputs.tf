@@ -59,7 +59,10 @@ output "waf_web_acl_arn" {
   value       = var.enable_waf ? module.waf[0].arn : null
 }
 
-output "waf_ip_set_arn" {
-  description = "WAF IP Set ARN containing whitelisted IPs (null if WAF disabled)"
-  value       = var.enable_waf ? aws_wafv2_ip_set.allowlist[0].arn : null
+output "waf_ip_set_arns" {
+  description = "WAF IP Set ARNs for whitelisted IPs (null if WAF disabled). Returns object with ipv4 and ipv6 ARNs."
+  value = var.enable_waf ? {
+    ipv4 = length(aws_wafv2_ip_set.allowlist_ipv4) > 0 ? aws_wafv2_ip_set.allowlist_ipv4[0].arn : null
+    ipv6 = length(aws_wafv2_ip_set.allowlist_ipv6) > 0 ? aws_wafv2_ip_set.allowlist_ipv6[0].arn : null
+  } : null
 }

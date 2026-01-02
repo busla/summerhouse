@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import 'leaflet/dist/leaflet.css'
+import 'react-day-picker/style.css'
 import { Navigation } from '@/components/layout/Navigation'
 import { ChatWidget } from '@/components/layout/ChatWidget'
 import { AmplifyProvider } from '@/components/providers/AmplifyProvider'

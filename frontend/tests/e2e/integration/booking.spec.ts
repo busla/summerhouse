@@ -20,7 +20,7 @@ test.setTimeout(60000)
 
 test.describe('Live Site - Basic Functionality', () => {
   test('loads the booking assistant homepage', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Verify the main heading is visible
     await expect(page.getByText('Welcome to Quesada Apartment!')).toBeVisible()
@@ -34,7 +34,7 @@ test.describe('Live Site - Basic Functionality', () => {
   })
 
   test('displays suggestion buttons', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Check that quick action buttons are visible
     await expect(page.getByRole('button', { name: 'Check availability' })).toBeVisible()
@@ -42,7 +42,7 @@ test.describe('Live Site - Basic Functionality', () => {
   })
 
   test('chat input accepts text', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -56,7 +56,7 @@ test.describe('Live Site - Basic Functionality', () => {
 
 test.describe('Live Site - Agent Interactions', () => {
   test('agent responds to greeting', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -74,7 +74,7 @@ test.describe('Live Site - Agent Interactions', () => {
   })
 
   test('check availability button triggers agent response', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Click the "Check availability" suggestion button
     await page.getByRole('button', { name: 'Check availability' }).click()
@@ -92,7 +92,7 @@ test.describe('Live Site - Agent Interactions', () => {
   })
 
   test('see pricing button shows pricing information', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Click the "See pricing" suggestion button
     await page.getByRole('button', { name: 'See pricing' }).click()
@@ -107,7 +107,7 @@ test.describe('Live Site - Agent Interactions', () => {
 
 test.describe('Live Site - Availability Queries', () => {
   test('can ask about specific date availability', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -127,7 +127,7 @@ test.describe('Live Site - Availability Queries', () => {
   })
 
   test('can ask about summer availability', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -147,7 +147,7 @@ test.describe('Live Site - Availability Queries', () => {
 
 test.describe('Live Site - Property Information', () => {
   test('can ask about property details', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -165,7 +165,7 @@ test.describe('Live Site - Property Information', () => {
   })
 
   test('can ask about location and area', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -185,7 +185,7 @@ test.describe('Live Site - Property Information', () => {
 
 test.describe('Live Site - Booking Flow', () => {
   test('agent guides through booking process', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -205,7 +205,7 @@ test.describe('Live Site - Booking Flow', () => {
   })
 
   test('handles minimum stay requirements', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -227,7 +227,7 @@ test.describe('Live Site - Booking Flow', () => {
 
 test.describe('Live Site - Error Handling', () => {
   test('handles past dates gracefully', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -247,7 +247,7 @@ test.describe('Live Site - Error Handling', () => {
   })
 
   test('handles invalid requests gracefully', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -271,7 +271,7 @@ test.describe('Live Site - Error Handling', () => {
 
 test.describe('Live Site - UI Responsiveness', () => {
   test('shows loading state while agent responds', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'
@@ -290,7 +290,7 @@ test.describe('Live Site - UI Responsiveness', () => {
   })
 
   test('maintains chat history', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     const chatInput = page.getByPlaceholder(
       'Ask about availability, pricing, or the property...'

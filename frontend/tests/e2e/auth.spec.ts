@@ -76,7 +76,7 @@ async function setVerificationState(
 
 test.describe('Verification Code Input Component', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -126,7 +126,7 @@ test.describe('Verification Code Input Component', () => {
 
 test.describe('Auth Session Management', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -201,7 +201,7 @@ test.describe('Auth Session Management', () => {
 
 test.describe('Verification State Management', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -253,7 +253,7 @@ test.describe('Verification State Management', () => {
 
 test.describe('OAuth2 Auth Link Rendering', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -301,7 +301,7 @@ test.describe('OAuth2 Auth Link Rendering', () => {
 
 test.describe('Agent-Driven Authentication Flow', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -348,7 +348,7 @@ test.describe('Agent-Driven Authentication Flow', () => {
 
 test.describe('Email Validation', () => {
   test('validates email format correctly', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Test email validation logic (mirrors backend/frontend validation)
     const testCases = await page.evaluate(() => {
@@ -379,7 +379,7 @@ test.describe('Email Validation', () => {
 
 test.describe('Auth Error Handling', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 
@@ -424,7 +424,7 @@ test.describe('Auth Error Handling', () => {
 
 test.describe('Auth Token Handling', () => {
   test('stores access token securely', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Set auth session with token
     await setAuthSession(page, {
@@ -451,7 +451,7 @@ test.describe('Auth Token Handling', () => {
   })
 
   test('generates correct auth headers', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Set auth session
     await setAuthSession(page, {
@@ -480,7 +480,7 @@ test.describe('Auth Token Handling', () => {
 
 test.describe('Multi-Tab Session Consistency', () => {
   test('session persists across page navigation', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     // Set session
     await setAuthSession(page, {
@@ -497,13 +497,13 @@ test.describe('Multi-Tab Session Consistency', () => {
     expect(session.guestId).toBe('guest_nav')
 
     // Navigate back
-    await page.goto('/')
+    await page.goto('/agent')
     const sessionAfterBack = await getAuthSession(page)
     expect(sessionAfterBack.guestId).toBe('guest_nav')
   })
 
   test('session survives page reload', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
 
     await setAuthSession(page, {
       isAuthenticated: true,
@@ -526,7 +526,7 @@ test.describe('Multi-Tab Session Consistency', () => {
 
 test.describe('Auth Component Accessibility', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
   })
 
   test('form inputs have proper aria labels', async ({ page }) => {

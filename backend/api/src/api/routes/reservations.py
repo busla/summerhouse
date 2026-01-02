@@ -40,18 +40,46 @@ router = APIRouter(tags=["reservations"])
 
 
 def _get_user_guest_id(request: Request) -> str | None:
-    """Extract guest_id from request based on JWT sub claim.
+    """Extract guest_id from request based on JWT claims.
 
     API Gateway validates JWT and passes sub via x-user-sub header.
-    We then look up the guest by cognito_sub.
+    We try to look up the guest by cognito_sub first, then fallback
+    to email lookup and auto-link the cognito_sub if found.
+
+    This handles the case where guests were created during email
+    verification (without cognito_sub) and later authenticate via
+    Cognito (which provides cognito_sub).
     """
     user_sub = request.headers.get("x-user-sub")
     if not user_sub:
         return None
 
     db = get_dynamodb_service()
+
+    # First, try lookup by cognito_sub (fast path for returning users)
     guest = db.get_guest_by_cognito_sub(user_sub)
-    return guest.get("guest_id") if guest else None
+    if guest:
+        return guest.get("guest_id")
+
+    # Fallback: Get email from Cognito claims and lookup by email
+    # Mangum exposes the Lambda event via ASGI scope
+    event = request.scope.get("aws.event", {})
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+    user_email = claims.get("email")
+
+    if not user_email:
+        return None
+
+    guest = db.get_guest_by_email(user_email)
+    if not guest:
+        return None
+
+    # Auto-link cognito_sub to guest for future fast lookups
+    guest_id = guest.get("guest_id")
+    if guest_id:
+        db.update_guest_cognito_sub(guest_id, user_sub)
+
+    return guest_id
 
 
 @router.post(

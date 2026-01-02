@@ -17,22 +17,22 @@ import { test, expect } from '@playwright/test'
 
 test.describe('Anonymous Inquiry Flow (US1)', () => {
   test.beforeEach(async ({ page }) => {
-    // Start from the home page (chat interface)
-    await page.goto('/')
+    // Start from the agent page (chat interface)
+    await page.goto('/agent')
     // Wait for the chat interface to be ready
     await expect(page.getByText('Welcome to Quesada Apartment!')).toBeVisible({ timeout: 10000 })
   })
 
   test('can view chat interface without authentication', async ({ page }) => {
     // Chat input should be available without login
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     await expect(chatInput).toBeVisible()
     await expect(chatInput).toBeEnabled()
   })
 
   test('can send inquiry message without authentication', async ({ page }) => {
     // Type an inquiry message
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     await chatInput.fill('What dates are available in March?')
 
     // Submit the message
@@ -61,7 +61,7 @@ test.describe('Anonymous Inquiry Flow (US1)', () => {
 
   test('does not prompt for authentication on inquiry', async ({ page }) => {
     // Send a pricing inquiry
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     await chatInput.fill('How much does it cost to stay for a week in July?')
 
     const sendButton = page.getByRole('button', { name: /send/i })
@@ -84,8 +84,9 @@ test.describe('Anonymous Inquiry Flow (US1)', () => {
 
     // Verify property information is visible without auth
     await expect(page.getByRole('heading', { name: /About Quesada Apartment/i })).toBeVisible()
-    await expect(page.getByText(/2 Bedrooms/i)).toBeVisible()
-    await expect(page.getByText(/4 Guests/i)).toBeVisible()
+    // Stats are displayed in separate elements (number + label)
+    await expect(page.getByText('Bedrooms')).toBeVisible()
+    await expect(page.getByText('Max Guests')).toBeVisible()
 
     // No auth prompts should appear
     const authPrompt = page.getByText(/sign in|log in|authenticate/i)
@@ -107,7 +108,7 @@ test.describe('Anonymous Inquiry Flow (US1)', () => {
 
   test('can view availability without authentication', async ({ page }) => {
     // Ask about availability via chat
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     await chatInput.fill('Show me the calendar for next month')
 
     const sendButton = page.getByRole('button', { name: /send/i })
@@ -137,7 +138,7 @@ test.describe('Anonymous Inquiry Flow (US1)', () => {
   })
 
   test('multiple inquiries work without authentication', async ({ page }) => {
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     const sendButton = page.getByRole('button', { name: /send/i })
 
     // First inquiry
@@ -174,11 +175,11 @@ test.describe('Anonymous Inquiry - Network Verification', () => {
       route.continue()
     })
 
-    await page.goto('/')
+    await page.goto('/agent')
     await expect(page.getByText('Welcome to Quesada Apartment!')).toBeVisible({ timeout: 10000 })
 
     // Send an inquiry
-    const chatInput = page.getByPlaceholder(/type.*message|ask.*question|message/i)
+    const chatInput = page.getByPlaceholder('Ask about availability, pricing, or the property...')
     await chatInput.fill('Hello, what dates are available?')
 
     const sendButton = page.getByRole('button', { name: /send/i })

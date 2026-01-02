@@ -463,7 +463,7 @@ test.describe('OAuth2 Callback Loading States', () => {
 
 test.describe('Auth Integration with Main App', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/agent')
     await clearAuthSession(page)
   })
 

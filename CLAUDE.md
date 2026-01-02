@@ -461,6 +461,8 @@ This project follows the Booking Constitution (v1.1.0):
 - DynamoDB (6 tables), AWS API Gateway HTTP API with JWT authorizer (007-tools-api-endpoints)
 - HCL (Terraform >= 1.5.0) + cloudposse/label/null ~> 0.25, terraform-aws-modules/lambda/aws ~> 8.1; Python 3.13 (OpenAPI generation) (008-rest-api-gateway)
 - AWS API Gateway REST API (OpenAPI-provisioned), Cognito User Pools authorizer, explicit deployment/stage resources (008-rest-api-gateway)
+- TypeScript 5.7+ (strict mode), Next.js 14+ (App Router, static export) + React Day Picker, Leaflet + React-Leaflet, Generated OpenAPI TypeScript Client, Vercel AI SDK v6, ai-elements, Lucide React, Tailwind CSS (009-booking-frontend)
+- DynamoDB (POIs table via backend API), existing backend services (availability, pricing, reservations) (009-booking-frontend)
 
 ## Recent Changes
 - 008-rest-api-gateway: Migrate gateway-v2 module from HTTP API to REST API; Cognito User Pools authorizer, explicit OPTIONS methods for CORS, deployment triggers

@@ -3,7 +3,7 @@
 #
 # Architecture:
 # - WAF Web ACL with deny-by-default (block all non-whitelisted IPs)
-# - IP Set for allowlisted IP addresses
+# - Separate IP Sets for IPv4 and IPv6 allowlisted addresses
 # - Optional AWS Managed Rule Groups
 #
 # Note: All WAF resources must be in us-east-1 for CloudFront scope
@@ -23,17 +23,54 @@ module "waf_label" {
 }
 
 # -----------------------------------------------------------------------------
-# WAF IP Set for Allowlisted IPs
+# Local variables for IP address family separation
 # -----------------------------------------------------------------------------
 
-resource "aws_wafv2_ip_set" "allowlist" {
-  count = var.enable_waf ? 1 : 0
+locals {
+  # Split whitelisted IPs into IPv4 and IPv6 lists
+  # IPv6 addresses contain colons (:), IPv4 addresses do not
+  ipv4_addresses = [
+    for entry in var.waf_whitelisted_ips : entry.ip
+    if !can(regex(":", entry.ip))
+  ]
+
+  ipv6_addresses = [
+    for entry in var.waf_whitelisted_ips : entry.ip
+    if can(regex(":", entry.ip))
+  ]
+
+  # Determine which IP sets to create
+  has_ipv4 = length(local.ipv4_addresses) > 0
+  has_ipv6 = length(local.ipv6_addresses) > 0
+
+  # Determine if we need OR logic (both IPv4 and IPv6 present)
+  needs_or_statement = local.has_ipv4 && local.has_ipv6
+}
+
+# -----------------------------------------------------------------------------
+# WAF IP Sets for Allowlisted IPs (separate sets for IPv4 and IPv6)
+# -----------------------------------------------------------------------------
+
+resource "aws_wafv2_ip_set" "allowlist_ipv4" {
+  count = var.enable_waf && local.has_ipv4 ? 1 : 0
 
   provider           = aws.us_east_1
-  name               = "${module.waf_label.id}-allowlist"
+  name               = "${module.waf_label.id}-allowlist-ipv4"
   scope              = "CLOUDFRONT"
   ip_address_version = "IPV4"
-  addresses          = [for entry in var.waf_whitelisted_ips : entry.ip]
+  addresses          = local.ipv4_addresses
+
+  tags = module.waf_label.tags
+}
+
+resource "aws_wafv2_ip_set" "allowlist_ipv6" {
+  count = var.enable_waf && local.has_ipv6 ? 1 : 0
+
+  provider           = aws.us_east_1
+  name               = "${module.waf_label.id}-allowlist-ipv6"
+  scope              = "CLOUDFRONT"
+  ip_address_version = "IPV6"
+  addresses          = local.ipv6_addresses
 
   tags = module.waf_label.tags
 }
@@ -61,25 +98,47 @@ module "waf" {
   # Deny-by-default: block all requests that don't match allow rules
   default_action = "block"
 
-  # IP allowlist rule - evaluated first (priority 1)
-  ip_set_reference_statement_rules = [
-    {
-      name     = "allow-whitelisted-ips"
-      action   = "allow"
-      priority = 1
+  # IP allowlist rules - separate rules for IPv4 and IPv6
+  # Both use "allow" action so matching either allows the request
+  ip_set_reference_statement_rules = concat(
+    # IPv4 allowlist rule (priority 1) - only if IPv4 addresses exist
+    local.has_ipv4 ? [
+      {
+        name     = "allow-whitelisted-ipv4"
+        action   = "allow"
+        priority = 1
 
-      # cloudposse/waf module expects 'arn' directly in statement, not nested
-      statement = {
-        arn = aws_wafv2_ip_set.allowlist[0].arn
-      }
+        statement = {
+          arn = aws_wafv2_ip_set.allowlist_ipv4[0].arn
+        }
 
-      visibility_config = {
-        cloudwatch_metrics_enabled = true
-        sampled_requests_enabled   = true
-        metric_name                = "${module.waf_label.id}-allowlist"
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          sampled_requests_enabled   = true
+          metric_name                = "${module.waf_label.id}-allowlist-ipv4"
+        }
       }
-    }
-  ]
+    ] : [],
+
+    # IPv6 allowlist rule (priority 2) - only if IPv6 addresses exist
+    local.has_ipv6 ? [
+      {
+        name     = "allow-whitelisted-ipv6"
+        action   = "allow"
+        priority = 2
+
+        statement = {
+          arn = aws_wafv2_ip_set.allowlist_ipv6[0].arn
+        }
+
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          sampled_requests_enabled   = true
+          metric_name                = "${module.waf_label.id}-allowlist-ipv6"
+        }
+      }
+    ] : []
+  )
 
   # Optional managed rule groups (evaluated after IP allowlist)
   managed_rule_group_statement_rules = [

@@ -8,6 +8,7 @@
  */
 
 import { useAuth } from '@/lib/auth'
+import { cn } from '@/lib/utils'
 
 export interface HeaderProps {
   /** Optional callback when logo is clicked */
@@ -18,11 +19,15 @@ export function Header({ onLogoClick }: HeaderProps) {
   const { session, signOut } = useAuth()
 
   return (
-    <header className="header">
-      <div className="header-content">
+    <header className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-4 shadow-[0_2px_8px_rgba(0,0,0,0.1)]">
+      <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-4">
         {/* Logo / Brand */}
         <div
-          className="header-brand"
+          className={cn(
+            'flex items-center gap-2',
+            onLogoClick && 'cursor-pointer',
+            'focus:outline-2 focus:outline-white focus:outline-offset-2 focus:rounded'
+          )}
           onClick={onLogoClick}
           role={onLogoClick ? 'button' : undefined}
           tabIndex={onLogoClick ? 0 : undefined}
@@ -33,22 +38,38 @@ export function Header({ onLogoClick }: HeaderProps) {
             }
           }}
         >
-          <span className="header-logo">☀️</span>
-          <span className="header-title">Quesada Apartment</span>
+          <span className="text-2xl">☀️</span>
+          <span className="text-2xl font-bold tracking-tight">
+            Quesada Apartment
+          </span>
         </div>
 
         {/* Location Badge */}
-        <div className="header-location">
-          <span className="header-location-icon">📍</span>
-          <span className="header-location-text">Quesada, Alicante</span>
+        <div
+          className={cn(
+            'hidden sm:flex items-center gap-1',
+            'text-sm opacity-90',
+            'bg-white/10 py-1.5 px-3 rounded-full'
+          )}
+        >
+          <span className="text-sm">📍</span>
+          <span className="font-medium">Quesada, Alicante</span>
         </div>
 
         {/* User Section */}
         {session?.isAuthenticated && (
-          <div className="header-user">
-            <span className="header-user-email">{session.email}</span>
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline text-sm opacity-90">
+              {session.email}
+            </span>
             <button
-              className="header-signout"
+              className={cn(
+                'bg-white/15 border-none text-white',
+                'py-1.5 px-3 rounded text-sm cursor-pointer',
+                'transition-colors duration-200',
+                'hover:bg-white/25',
+                'focus:outline-2 focus:outline-white focus:outline-offset-2'
+              )}
               onClick={() => signOut()}
               aria-label="Sign out"
             >
@@ -57,107 +78,6 @@ export function Header({ onLogoClick }: HeaderProps) {
           </div>
         )}
       </div>
-
-      <style jsx>{`
-        .header {
-          background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-          color: white;
-          padding: 1rem;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .header-content {
-          max-width: 1200px;
-          margin: 0 auto;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 1rem;
-        }
-
-        .header-brand {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          cursor: ${onLogoClick ? 'pointer' : 'default'};
-        }
-
-        .header-brand:focus {
-          outline: 2px solid white;
-          outline-offset: 2px;
-          border-radius: 4px;
-        }
-
-        .header-logo {
-          font-size: 1.5rem;
-        }
-
-        .header-title {
-          font-size: 1.5rem;
-          font-weight: 700;
-          letter-spacing: -0.02em;
-        }
-
-        .header-location {
-          display: flex;
-          align-items: center;
-          gap: 0.25rem;
-          font-size: 0.875rem;
-          opacity: 0.9;
-          background: rgba(255, 255, 255, 0.1);
-          padding: 0.375rem 0.75rem;
-          border-radius: 9999px;
-        }
-
-        .header-location-icon {
-          font-size: 0.875rem;
-        }
-
-        .header-location-text {
-          font-weight: 500;
-        }
-
-        .header-user {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
-
-        .header-user-email {
-          font-size: 0.875rem;
-          opacity: 0.9;
-        }
-
-        .header-signout {
-          background: rgba(255, 255, 255, 0.15);
-          border: none;
-          color: white;
-          padding: 0.375rem 0.75rem;
-          border-radius: 4px;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
-
-        .header-signout:hover {
-          background: rgba(255, 255, 255, 0.25);
-        }
-
-        .header-signout:focus {
-          outline: 2px solid white;
-          outline-offset: 2px;
-        }
-
-        @media (max-width: 640px) {
-          .header-location {
-            display: none;
-          }
-
-          .header-user-email {
-            display: none;
-          }
-        }
-      `}</style>
     </header>
   )
 }
