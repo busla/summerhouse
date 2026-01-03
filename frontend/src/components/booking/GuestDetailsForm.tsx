@@ -49,6 +49,8 @@ export interface GuestDetailsFormProps {
   defaultValues?: Partial<GuestDetails>
   /** Callback when form is submitted with valid data */
   onSubmit: (data: GuestDetails) => void
+  /** Callback when form values change (for persistence) */
+  onChange?: (values: Partial<GuestDetails>) => void
   /** Whether the form is submitting */
   isSubmitting?: boolean
   /** Custom class name */
@@ -60,6 +62,7 @@ export interface GuestDetailsFormProps {
 export function GuestDetailsForm({
   defaultValues,
   onSubmit,
+  onChange,
   isSubmitting = false,
   className,
   children,
@@ -95,6 +98,15 @@ export function GuestDetailsForm({
       }
     }
   }, [isAuthenticated, user, form])
+
+  // Subscribe to form value changes for persistence callback
+  useEffect(() => {
+    if (!onChange) return
+    const subscription = form.watch((values) => {
+      onChange(values as Partial<GuestDetails>)
+    })
+    return () => subscription.unsubscribe()
+  }, [form, onChange])
 
   const handleSubmit = form.handleSubmit((data) => {
     // Ensure authenticated user's email is used even if form wasn't manually updated

@@ -465,6 +465,8 @@ This project follows the Booking Constitution (v1.1.0):
 - DynamoDB (POIs table via backend API), existing backend services (availability, pricing, reservations) (009-booking-frontend)
 - TypeScript 5.7+ (frontend), Python 3.13+ (backend) + Next.js 14+, shadcn/ui (Radix primitives), Tailwind CSS, AWS Amplify, FastAPI, Pydantic v2 (011-cleanup-shadcn-auth)
 - AWS DynamoDB (`customers` table - renamed from `guests`), AWS Cognito (all profile fields: email, phone_number, name) (011-cleanup-shadcn-auth)
+- TypeScript 5.x (frontend), HCL/Terraform >= 1.5.0 (infrastructure) + Next.js 14+ (App Router), React, terraform-aws-modules/cloudfron (012-fix-routing-waf)
+- Browser sessionStorage (form data), S3 (static files) (012-fix-routing-waf)
 
 ## Recent Changes
 - 008-rest-api-gateway: Migrate gateway-v2 module from HTTP API to REST API; Cognito User Pools authorizer, explicit OPTIONS methods for CORS, deployment triggers

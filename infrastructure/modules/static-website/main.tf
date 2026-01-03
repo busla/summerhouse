@@ -124,6 +124,17 @@ module "cloudfront" {
   # Don't wait for distribution deployment - speeds up terraform apply
   wait_for_deployment = false
 
+  # CloudFront Function for URL rewrite (T012)
+  # Normalizes URLs to index.html for Next.js static exports with trailingSlash: true
+  cloudfront_functions = {
+    url-rewrite = {
+      runtime = "cloudfront-js-2.0"
+      comment = "Normalize URLs to index.html for Next.js static site"
+      code    = file("${path.module}/functions/url-rewrite.js")
+      publish = true
+    }
+  }
+
   # Origin Access Control for S3
   origin_access_control = {
     s3_oac = {
@@ -175,6 +186,14 @@ module "cloudfront" {
     min_ttl     = 0
     default_ttl = 3600  # 1 hour
     max_ttl     = 86400 # 24 hours
+
+    # CloudFront Function association for URL rewrite (T013)
+    # Runs on viewer-request to normalize URLs before S3 lookup
+    function_association = {
+      viewer-request = {
+        function_key = "url-rewrite"
+      }
+    }
   }
 
   # Cache behaviors: API Gateway (no cache) + static assets (long cache)

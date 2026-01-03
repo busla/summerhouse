@@ -35,12 +35,24 @@ export function Navigation({ links = [], activePath, onNavigate }: NavigationPro
   // Use provided activePath or auto-detect from pathname
   const currentPath = activePath ?? pathname
 
+  // Normalize pathname for comparison (T017)
+  // Removes trailing slash except for root path '/'
+  // This ensures /gallery matches /gallery/ for active state
+  const normalizePathname = (path: string): string =>
+    path === '/' ? path : path.replace(/\/$/, '')
+
+  // Check if a link is active using normalized paths (T018)
+  const isActive = (href: string): boolean =>
+    normalizePathname(currentPath) === normalizePathname(href)
+
+  // Use trailing slashes to match Next.js trailingSlash: true config
+  // This ensures URLs match the static export structure (/gallery/index.html)
   const defaultLinks: NavLink[] = [
     { label: 'Home', href: '/' },
-    { label: 'Gallery', href: '/gallery' },
-    { label: 'Location', href: '/location' },
-    { label: 'Book', href: '/book' },
-    { label: 'Agent', href: '/agent' },
+    { label: 'Gallery', href: '/gallery/' },
+    { label: 'Location', href: '/location/' },
+    { label: 'Book', href: '/book/' },
+    { label: 'Agent', href: '/agent/' },
   ]
 
   const navLinks = links.length > 0 ? links : defaultLinks
@@ -68,7 +80,7 @@ export function Navigation({ links = [], activePath, onNavigate }: NavigationPro
                 'text-gray-600 no-underline',
                 'transition-colors duration-200',
                 'hover:text-blue-700 hover:bg-blue-50',
-                currentPath === link.href && 'text-blue-700 bg-blue-50'
+                isActive(link.href) && 'text-blue-700 bg-blue-50'
               )}
               onClick={(e) => {
                 if (onNavigate) {
@@ -138,7 +150,7 @@ export function Navigation({ links = [], activePath, onNavigate }: NavigationPro
                 'text-gray-600 no-underline',
                 'transition-colors duration-200',
                 'hover:text-blue-700 hover:bg-blue-50',
-                currentPath === link.href && 'text-blue-700 bg-blue-50',
+                isActive(link.href) && 'text-blue-700 bg-blue-50',
                 index < navLinks.length - 1 && 'border-b border-gray-100'
               )}
               onClick={(e) => {

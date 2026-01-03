@@ -22,9 +22,30 @@ import { BookingConfirmation } from '@/components/booking/BookingConfirmation'
 import { usePricing } from '@/hooks/usePricing'
 import { useAvailability } from '@/hooks/useAvailability'
 import { useCreateReservation } from '@/hooks/useCreateReservation'
+import {
+  useFormPersistence,
+  serializeWithDates,
+  deserializeWithDates,
+} from '@/hooks/useFormPersistence'
 import type { DateRange as DayPickerRange } from 'react-day-picker'
 import type { GuestDetails } from '@/lib/schemas/booking-form.schema'
 import type { Reservation } from '@/lib/api-client'
+
+// Storage key for form persistence (T006)
+const STORAGE_KEY = 'booking-form-state'
+
+// Shape of persisted form state
+interface BookingFormState {
+  currentStep: BookingStep
+  selectedRange: DayPickerRange | undefined
+  guestDetails: GuestDetails | null
+}
+
+const initialFormState: BookingFormState = {
+  currentStep: 'dates',
+  selectedRange: undefined,
+  guestDetails: null,
+}
 
 // Step definition for the booking flow
 type BookingStep = 'dates' | 'guest' | 'confirmation'
@@ -36,11 +57,28 @@ const STEPS: { key: BookingStep; label: string; icon: React.ReactNode }[] = [
 ]
 
 export default function BookPage() {
-  const [currentStep, setCurrentStep] = useState<BookingStep>('dates')
-  const [selectedRange, setSelectedRange] = useState<DayPickerRange | undefined>()
-  const [guestDetails, setGuestDetails] = useState<GuestDetails | null>(null)
+  // Persisted form state - survives browser refresh (T007)
+  const [formState, setFormState, clearFormState] = useFormPersistence<BookingFormState>({
+    key: STORAGE_KEY,
+    initialValue: initialFormState,
+    serialize: serializeWithDates,
+    deserialize: deserializeWithDates,
+  })
+
+  // Destructure for easier access
+  const { currentStep, selectedRange, guestDetails } = formState
+
+  // Non-persisted state (reservation comes from API, error is transient)
   const [reservation, setReservation] = useState<Reservation | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Helper to update specific form fields
+  const updateFormState = useCallback(
+    (updates: Partial<BookingFormState>) => {
+      setFormState((prev) => ({ ...prev, ...updates }))
+    },
+    [setFormState]
+  )
 
   // Fetch availability (blocked dates)
   const { blockedDates, isLoading: availabilityLoading } = useAvailability()
@@ -57,18 +95,26 @@ export default function BookPage() {
   const hasCompleteDates = selectedRange?.from && selectedRange?.to
 
   const handleDatesChange = useCallback((range: DayPickerRange | undefined) => {
-    setSelectedRange(range)
-  }, [])
+    updateFormState({ selectedRange: range })
+  }, [updateFormState])
 
   const handleContinueToGuest = useCallback(() => {
     if (hasCompleteDates) {
-      setCurrentStep('guest')
+      updateFormState({ currentStep: 'guest' })
     }
-  }, [hasCompleteDates])
+  }, [hasCompleteDates, updateFormState])
 
   const handleBackToDates = useCallback(() => {
-    setCurrentStep('dates')
-  }, [])
+    updateFormState({ currentStep: 'dates' })
+  }, [updateFormState])
+
+  // Persist guest details as user types (real-time form persistence)
+  const handleGuestDetailsChange = useCallback((values: Partial<GuestDetails>) => {
+    // Only update if values have meaningful content to avoid unnecessary writes
+    if (values.name || values.email || values.phone || values.guestCount || values.specialRequests) {
+      updateFormState({ guestDetails: values as GuestDetails })
+    }
+  }, [updateFormState])
 
   const handleGuestSubmit = useCallback(async (data: GuestDetails) => {
     if (!selectedRange?.from || !selectedRange?.to) {
@@ -76,7 +122,7 @@ export default function BookPage() {
       return
     }
 
-    setGuestDetails(data)
+    updateFormState({ guestDetails: data })
     setSubmitError(null)
 
     // Create the reservation via API
@@ -95,9 +141,11 @@ export default function BookPage() {
 
     if (result.reservation) {
       setReservation(result.reservation)
-      setCurrentStep('confirmation')
+      updateFormState({ currentStep: 'confirmation' })
+      // Clear persisted form data after successful booking (T008)
+      clearFormState()
     }
-  }, [selectedRange, createReservation])
+  }, [selectedRange, createReservation, updateFormState, clearFormState])
 
   // Step indicator component
   const StepIndicator = () => (
@@ -252,7 +300,9 @@ export default function BookPage() {
             )}
 
             <GuestDetailsForm
+              defaultValues={guestDetails ?? undefined}
               onSubmit={handleGuestSubmit}
+              onChange={handleGuestDetailsChange}
               isSubmitting={isSubmitting}
             >
               <div className="flex justify-between gap-4 pt-4">
