@@ -117,7 +117,8 @@ booking/
 │   │   ├── hooks/              # Custom React hooks
 │   │   │   ├── useAvailability.ts  # Check date availability
 │   │   │   ├── usePricing.ts       # Calculate pricing
-│   │   │   └── useCreateReservation.ts  # Submit bookings
+│   │   │   ├── useCreateReservation.ts  # Submit bookings
+│   │   │   └── useAuthenticatedUser.ts  # Cognito OTP auth & session mgmt
 │   │   └── lib/                # Utilities
 │   ├── tests/
 │   │   ├── e2e/                # Playwright E2E tests
@@ -142,6 +143,7 @@ booking/
 │   │   │   │   ├── availability.py
 │   │   │   │   ├── pricing.py
 │   │   │   │   ├── reservations.py  (JWT required for create/modify/delete)
+│   │   │   │   ├── customers.py    (JWT required: profile management)
 │   │   │   │   ├── payments.py
 │   │   │   │   ├── guests.py
 │   │   │   │   ├── property.py
@@ -298,13 +300,20 @@ Form collects:
 
 Form uses React Hook Form with Zod validation for client-side validation.
 
-### 7. Email Verification
-After form submission:
-- Frontend calls `POST /api/guests/initiate-verification`
+Form also integrates `useAuthenticatedUser` hook to detect existing Cognito sessions:
+- If authenticated: email and name fields display as read-only with signed-in banner
+- If anonymous: inline "Verify email" button initiates OTP flow
+- Users can sign out to switch accounts
+
+### 7. Email Verification (Inline OTP)
+After clicking "Verify email" button:
+- `useAuthenticatedUser.initiateAuth(email)` attempts sign-in (existing user) or sign-up (new user)
 - User receives OTP email via Cognito
-- Dialog prompts for OTP entry
-- Frontend calls `POST /api/guests/verify-code` with OTP
-- Cognito validates and issues JWT token
+- Form transitions to OTP entry state with input field
+- User enters 6-digit code
+- `useAuthenticatedUser.confirmOtp(code)` verifies and establishes session
+- Error handling with type-aware messaging (network, validation, auth, rate_limit)
+- Retry actions appear based on error type (resend, sign in again, etc.)
 
 ### 8. Create Reservation
 After verification:
@@ -342,6 +351,9 @@ All endpoints auto-generated from OpenAPI spec. Frontend uses generated TypeScri
 - `POST /api/guests/verify-code` - Verify OTP and get JWT
 
 ### Protected Endpoints (JWT required)
+- `GET /api/customers/me` - Get current customer profile
+- `POST /api/customers/me` - Create customer profile
+- `PUT /api/customers/me` - Update current customer profile
 - `POST /api/reservations` - Create reservation
 - `PATCH /api/reservations/{id}` - Modify reservation
 - `DELETE /api/reservations/{id}` - Cancel reservation
@@ -443,7 +455,10 @@ JWT_SECRET=your-secret-key-here
 | Photo Gallery | ✓ Complete | Lightbox with keyboard/touch support |
 | AI Agent Chat | ✓ Complete | All tools available at `/agent` |
 | Location Map | ✓ Complete | POI markers with details |
-| Email Verification | ✓ Complete | OTP via Cognito |
+| Email Verification | ✓ Complete | OTP via Cognito, inline in form |
+| User Profile Management | ✓ Complete | GET/POST/PUT /customers/me endpoints |
+| Session Persistence | ✓ Complete | Cognito session auto-restore on page load |
+| Authenticated State Display | ✓ Complete | Read-only fields + sign-out option |
 | Seasonal Pricing | ✓ Complete | Rate calculation per period |
 | Availability Calendar | ✓ Complete | Real-time DynamoDB checks |
 | Price Breakdown | ✓ Complete | Nightly rate + cleaning fee |

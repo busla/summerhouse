@@ -2,23 +2,27 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                           SYNC IMPACT REPORT                                  ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║ Version Change: 1.1.0 → 1.2.0 (UI Component Research principle added)        ║
+║ Version Change: 1.2.0 → 1.3.0 (shadcn + OpenAPI client generation added)     ║
 ║                                                                              ║
 ║ Modified Principles:                                                         ║
-║   - VI. Technology Stack: Added "UI Component Development" subsection        ║
+║   - VI. Technology Stack > UI Component Development: Added shadcn priority   ║
+║   - VI. Technology Stack: Added new "Frontend API Integration" subsection    ║
 ║                                                                              ║
 ║ Added Sections:                                                              ║
 ║   - VI. Technology Stack > UI Component Development                          ║
-║     - MUST research ai-elements catalogue before custom implementation       ║
-║     - MUST document catalogue research findings                              ║
-║     - MUST justify custom implementations when catalogue lacks component     ║
+║     - MUST prefer shadcn/ui components over custom implementations           ║
+║     - MUST research shadcn catalogue before writing custom components        ║
+║   - VI. Technology Stack > Frontend API Integration (NEW)                    ║
+║     - MUST generate HTTP clients from FastAPI OpenAPI schema                 ║
+║     - MUST NOT write custom fetch/axios calls for API endpoints              ║
+║     - MUST regenerate client when OpenAPI spec changes                       ║
 ║                                                                              ║
 ║ Removed Sections:                                                            ║
 ║   - None                                                                     ║
 ║                                                                              ║
 ║ Templates Status:                                                            ║
 ║   - .specify/templates/plan-template.md        ✅ Compatible (Constitution   ║
-║     Check section will enforce new principle during planning)                ║
+║     Check section will enforce new principles during planning)               ║
 ║   - .specify/templates/spec-template.md        ✅ Compatible (no changes)    ║
 ║   - .specify/templates/tasks-template.md       ✅ Compatible (no changes)    ║
 ║                                                                              ║
@@ -112,13 +116,30 @@ maintainability across the project:
 
 **UI Component Development**
 
-- MUST research the ai-elements catalogue before planning any UI component implementation
-- MUST document which ai-elements components were considered and their applicability
-- MUST use existing ai-elements components when they meet requirements (even partially)
+- MUST prefer shadcn/ui components over custom implementations for all standard UI elements
+- MUST research the shadcn/ui catalogue before planning any UI component implementation
+- MUST research the ai-elements catalogue for agent-specific UI components
+- MUST document which shadcn/ui or ai-elements components were considered and their
+  applicability
+- MUST use existing shadcn/ui or ai-elements components when they meet requirements
+  (even partially)
 - MUST justify with documented rationale any decision to implement custom components
-  when ai-elements lacks suitable options
-- SHOULD extend or compose ai-elements components rather than building from scratch
-- MUST NOT implement custom UI components that duplicate ai-elements functionality
+  when existing libraries lack suitable options
+- SHOULD extend or compose existing components rather than building from scratch
+- MUST NOT implement custom UI components that duplicate shadcn/ui or ai-elements
+  functionality
+
+**Frontend API Integration**
+
+- MUST generate TypeScript HTTP clients from the FastAPI backend OpenAPI schema
+- MUST use @hey-api/openapi-ts (or equivalent OpenAPI generator) to generate type-safe
+  API clients
+- MUST NOT write custom fetch, axios, or other HTTP calls for API endpoints that exist
+  in the OpenAPI schema
+- MUST regenerate the API client whenever the backend OpenAPI specification changes
+- MUST use the generated client's types for all API request/response handling
+- SHOULD configure the generated client with interceptors for cross-cutting concerns
+  (auth headers, error handling, logging)
 
 **Backend Agent Development**
 
@@ -136,9 +157,10 @@ maintainability across the project:
 
 **Rationale**: A consistent technology stack reduces cognitive load, enables knowledge
 sharing, and prevents fragmentation. These specific choices align with the agent-first
-architecture and AWS deployment target of the Booking platform. Researching
-existing component libraries before implementation prevents duplication of effort and
-ensures consistent UI patterns across the application.
+architecture and AWS deployment target of the Booking platform. Preferring shadcn/ui
+ensures consistent, accessible UI patterns with minimal custom code. Generating API
+clients from OpenAPI ensures type safety across the frontend-backend boundary and
+eliminates manual synchronization errors.
 
 ## Quality Standards
 
@@ -176,4 +198,4 @@ This constitution is the supreme authority for development practices in Booking:
 - **Exceptions**: Any principle violation MUST be documented with justification in the
   Complexity Tracking section of the relevant plan.md
 
-**Version**: 1.2.0 | **Ratified**: 2025-12-27 | **Last Amended**: 2025-12-28
+**Version**: 1.3.0 | **Ratified**: 2025-12-27 | **Last Amended**: 2026-01-03
