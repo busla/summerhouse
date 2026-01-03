@@ -70,7 +70,13 @@ tasks:
       - uv run --package api uvicorn api.main:app --reload --port 3001
 
   backend:test:
-    desc: Run backend tests
+    desc: Run backend tests (excludes agent/LLM tests - see backend:test:all)
+    dir: backend
+    cmds:
+      - uv run pytest --ignore=tests/integration/test_conversation_context.py
+
+  backend:test:all:
+    desc: Run ALL backend tests including agent/LLM tests
     dir: backend
     cmds:
       - uv run pytest
@@ -116,7 +122,13 @@ tasks:
       - yarn build
 
   frontend:test:
-    desc: Run frontend unit tests
+    desc: Run frontend unit tests (excludes chat/agent tests - see frontend:test:all)
+    dir: frontend
+    cmds:
+      - yarn vitest run --exclude '**/chat.test.ts'
+
+  frontend:test:all:
+    desc: Run ALL frontend tests including chat/agent tests
     dir: frontend
     cmds:
       - yarn test

@@ -248,6 +248,10 @@ class TestRouteSecurityClassification:
             # Payments (authenticated operations)
             ("post", "/payments"),
             ("post", "/payments/{reservation_id}/retry"),
+            # Customers (authenticated profile management)
+            ("get", "/customers/me"),
+            ("post", "/customers/me"),
+            ("put", "/customers/me"),
         ]
 
         for method, path in protected_routes:
@@ -298,7 +302,7 @@ class TestCORSConfiguration:
 
 
 class TestAllEndpointsExist:
-    """Test suite verifying all 25 business endpoints exist in OpenAPI spec.
+    """Test suite verifying all 28 business endpoints exist in OpenAPI spec.
 
     Organized by user story per spec 007-tools-api-endpoints.
     """
@@ -355,10 +359,16 @@ class TestAllEndpointsExist:
             ("get", "/area"),
             ("get", "/area/recommendations"),
         ],
+        # US8: Customers (authenticated profile management)
+        "customers": [
+            ("get", "/customers/me"),
+            ("post", "/customers/me"),
+            ("put", "/customers/me"),
+        ],
     }
 
     def test_all_business_endpoints_exist(self, generated_openapi: dict) -> None:
-        """Verify all 25 business endpoints are present in the OpenAPI spec."""
+        """Verify all 28 business endpoints are present in the OpenAPI spec."""
         missing = []
         paths = generated_openapi.get("paths", {})
 
@@ -392,7 +402,7 @@ class TestAllEndpointsExist:
 
     @pytest.mark.parametrize(
         "domain",
-        ["health", "availability", "pricing", "reservations", "payments", "guests", "property", "area"],
+        ["health", "availability", "pricing", "reservations", "payments", "guests", "property", "area", "customers"],
     )
     def test_domain_endpoints_complete(
         self, generated_openapi: dict, domain: str

@@ -100,18 +100,37 @@ if not os.environ.get("AWS_PROFILE") and not os.environ.get("AWS_ACCESS_KEY_ID")
 
 
 @pytest.fixture(autouse=True)
-def reset_dynamodb_singleton() -> Generator[None, None, None]:
+def reset_dynamodb_singleton(request: pytest.FixtureRequest) -> Generator[None, None, None]:
     """Reset DynamoDB singleton before and after each test.
 
     This ensures tests using mock_aws get a fresh service instance
     inside the mock context rather than reusing a singleton from
     a previous test or non-mocked context.
-    """
-    from shared.services.dynamodb import reset_dynamodb_service
 
-    reset_dynamodb_service()
-    yield
-    reset_dynamodb_service()
+    Only applies to tests that use DynamoDB-related fixtures or markers.
+    Tests for pure Pydantic models and other non-DynamoDB code are skipped.
+    """
+    # Check if test needs DynamoDB - skip if it's a pure model/schema test
+    # Detection: check for dynamodb fixtures in test or "dynamodb" marker
+    fixture_names = request.fixturenames
+    dynamodb_fixtures = {"dynamodb_client", "dynamodb_resource", "create_tables", "aws_credentials"}
+
+    # Also check the test file path - unit/api tests for models don't need DynamoDB
+    test_path = str(request.fspath) if hasattr(request, "fspath") else ""
+    is_model_test = "test_customer_models" in test_path or "test_models" in test_path
+
+    needs_dynamodb = (
+        bool(dynamodb_fixtures & set(fixture_names))
+        or request.node.get_closest_marker("dynamodb") is not None
+    )
+
+    if needs_dynamodb and not is_model_test:
+        from shared.services.dynamodb import reset_dynamodb_service
+        reset_dynamodb_service()
+        yield
+        reset_dynamodb_service()
+    else:
+        yield
 
 
 @pytest.fixture
