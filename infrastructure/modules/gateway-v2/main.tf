@@ -158,6 +158,14 @@ module "lambda" {
             "logs:PutLogEvents"
           ]
           Resource = "arn:aws:logs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:*"
+        },
+        {
+          Sid    = "SSMStripeParameters"
+          Effect = "Allow"
+          Action = [
+            "ssm:GetParameter"
+          ]
+          Resource = "arn:aws:ssm:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:parameter/booking/${module.label.environment}/stripe/*"
         }
       ],
       # Additional DynamoDB tables for API routes (booking tables)

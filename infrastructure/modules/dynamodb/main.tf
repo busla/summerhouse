@@ -207,6 +207,44 @@ module "verification_codes" {
 }
 
 # -----------------------------------------------------------------------------
+# Stripe Webhook Events Table (with TTL)
+# -----------------------------------------------------------------------------
+# Tracks processed Stripe webhook events for idempotency and auditing.
+# TTL set to 90 days (7,776,000 seconds) for compliance record-keeping.
+
+module "stripe_webhook_events" {
+  source  = "terraform-aws-modules/dynamodb-table/aws"
+  version = "~> 5.0"
+
+  name     = "${module.label.id}-stripe-webhook-events"
+  hash_key = "event_id"
+
+  billing_mode = "PAY_PER_REQUEST"
+
+  attributes = [
+    { name = "event_id", type = "S" },
+    { name = "event_type", type = "S" },
+    { name = "processed_at", type = "S" }
+  ]
+
+  # GSI for querying by event type (useful for debugging/analytics)
+  global_secondary_indexes = [
+    {
+      name            = "event-type-index"
+      hash_key        = "event_type"
+      range_key       = "processed_at"
+      projection_type = "ALL"
+    }
+  ]
+
+  # TTL for automatic expiration (90 days)
+  ttl_enabled        = true
+  ttl_attribute_name = "ttl"
+
+  tags = module.label.tags
+}
+
+# -----------------------------------------------------------------------------
 # OAuth2 Sessions Table (with TTL)
 # -----------------------------------------------------------------------------
 # Tracks OAuth2 session_id → guest_email mapping for user identity verification

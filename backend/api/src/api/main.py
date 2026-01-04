@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from api.docs import router as docs_router
+from api.middleware import CorrelationIdMiddleware
 from api.exceptions import register_exception_handlers
 from api.routes.area import router as area_router
 from api.routes.availability import router as availability_router
@@ -27,6 +28,7 @@ from api.routes.payments import router as payments_router
 from api.routes.pricing import router as pricing_router
 from api.routes.property import router as property_router
 from api.routes.reservations import router as reservations_router
+from api.routes.webhooks import router as webhooks_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +52,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add correlation ID middleware for request tracing
+app.add_middleware(CorrelationIdMiddleware)
+
 # Register exception handlers for consistent error responses
 register_exception_handlers(app)
 
@@ -65,6 +70,7 @@ app.include_router(payments_router)
 app.include_router(customers_router)
 app.include_router(property_router)
 app.include_router(area_router)
+app.include_router(webhooks_router)
 
 
 @app.get("/ping")

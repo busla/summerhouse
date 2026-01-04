@@ -1,0 +1,274 @@
+openapi: 3.1.0
+info:
+  title: Payment Status API
+  description: |
+    Get payment status for reservations.
+
+    This endpoint returns the current payment status including
+    transaction details and refund information if applicable.
+  version: 1.0.0
+
+servers:
+  - url: https://api.booking.example/api
+    description: Production server
+  - url: https://api-dev.booking.example/api
+    description: Development server
+  - url: http://localhost:3001/api
+    description: Local development
+
+tags:
+  - name: Payments
+    description: Payment processing endpoints
+
+paths:
+  /payments/{reservation_id}/status:
+    get:
+      tags:
+        - Payments
+      summary: Get payment status for reservation
+      description: |
+        Returns the current payment status for a reservation.
+
+        **Authentication**: Public endpoint (no JWT required)
+
+        Returns the most recent completed payment, or the most recent
+        payment if none are completed.
+
+        **Response includes**:
+        - Payment details (amount, status, provider)
+        - Stripe transaction IDs
+        - Refund information if applicable
+        - Number of payment attempts
+      operationId: getPaymentStatus
+      parameters:
+        - name: reservation_id
+          in: path
+          required: true
+          description: Reservation ID to get payment status for
+          schema:
+            type: string
+          examples:
+            valid:
+              value: "RES-2026-ABC123"
+      responses:
+        '200':
+          description: Payment status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentStatusResponse'
+              examples:
+                completedPayment:
+                  summary: Completed payment
+                  value:
+                    reservation_id: "RES-2026-ABC123"
+                    payment:
+                      payment_id: "PAY-2026-DEF456"
+                      reservation_id: "RES-2026-ABC123"
+                      amount: 112500
+                      currency: "EUR"
+                      status: "completed"
+                      payment_method: "card"
+                      provider: "stripe"
+                      provider_transaction_id: "pi_3ABC123DEF456"
+                      created_at: "2026-01-03T10:00:00Z"
+                      completed_at: "2026-01-03T10:02:15Z"
+                      stripe_checkout_session_id: "cs_test_abc123"
+                      stripe_payment_intent_id: "pi_3ABC123DEF456"
+                    has_completed_payment: true
+                    is_refunded: false
+                    payment_attempts: 1
+                pendingPayment:
+                  summary: Pending payment (checkout in progress)
+                  value:
+                    reservation_id: "RES-2026-ABC123"
+                    payment:
+                      payment_id: "PAY-2026-DEF456"
+                      reservation_id: "RES-2026-ABC123"
+                      amount: 112500
+                      currency: "EUR"
+                      status: "pending"
+                      payment_method: "card"
+                      provider: "stripe"
+                      created_at: "2026-01-03T10:00:00Z"
+                      stripe_checkout_session_id: "cs_test_abc123"
+                    has_completed_payment: false
+                    is_refunded: false
+                    payment_attempts: 1
+                refundedPayment:
+                  summary: Refunded payment (50% partial)
+                  value:
+                    reservation_id: "RES-2026-ABC123"
+                    payment:
+                      payment_id: "PAY-2026-DEF456"
+                      reservation_id: "RES-2026-ABC123"
+                      amount: 112500
+                      currency: "EUR"
+                      status: "refunded"
+                      payment_method: "card"
+                      provider: "stripe"
+                      provider_transaction_id: "pi_3ABC123DEF456"
+                      created_at: "2026-01-03T10:00:00Z"
+                      completed_at: "2026-01-03T10:02:15Z"
+                      stripe_checkout_session_id: "cs_test_abc123"
+                      stripe_payment_intent_id: "pi_3ABC123DEF456"
+                      stripe_refund_id: "re_3ABC123DEF456"
+                      refund_amount: 56250
+                      refunded_at: "2026-01-10T14:30:00Z"
+                    has_completed_payment: true
+                    is_refunded: true
+                    refund_amount: 56250
+                    payment_attempts: 1
+                failedRetry:
+                  summary: Multiple payment attempts
+                  value:
+                    reservation_id: "RES-2026-ABC123"
+                    payment:
+                      payment_id: "PAY-2026-GHI789"
+                      reservation_id: "RES-2026-ABC123"
+                      amount: 112500
+                      currency: "EUR"
+                      status: "failed"
+                      payment_method: "card"
+                      provider: "stripe"
+                      created_at: "2026-01-03T10:05:00Z"
+                      error_message: "Your card was declined"
+                    has_completed_payment: false
+                    is_refunded: false
+                    payment_attempts: 2
+        '404':
+          description: No payment found for reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_404"
+                message: "No payment found for reservation RES-2026-ABC123"
+                recovery: "Create a checkout session to initiate payment"
+
+components:
+  schemas:
+    PaymentStatusResponse:
+      type: object
+      required:
+        - reservation_id
+        - has_completed_payment
+        - is_refunded
+        - payment_attempts
+      properties:
+        reservation_id:
+          type: string
+          description: Reservation ID
+        payment:
+          $ref: '#/components/schemas/Payment'
+        has_completed_payment:
+          type: boolean
+          description: Whether a successful payment exists
+        is_refunded:
+          type: boolean
+          description: Whether payment has been refunded
+        refund_amount:
+          type: integer
+          minimum: 0
+          description: Refund amount in EUR cents (if refunded)
+        payment_attempts:
+          type: integer
+          minimum: 0
+          description: Number of payment attempts made
+
+    Payment:
+      type: object
+      required:
+        - payment_id
+        - reservation_id
+        - amount
+        - currency
+        - status
+        - payment_method
+        - provider
+        - created_at
+      properties:
+        payment_id:
+          type: string
+          description: Unique payment ID
+        reservation_id:
+          type: string
+          description: Reference to reservation
+        amount:
+          type: integer
+          minimum: 0
+          description: Amount in EUR cents
+        currency:
+          type: string
+          default: "EUR"
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - failed
+            - refunded
+          description: Transaction status
+        payment_method:
+          type: string
+          enum:
+            - card
+            - paypal
+            - bank_transfer
+        provider:
+          type: string
+          enum:
+            - stripe
+            - mock
+        provider_transaction_id:
+          type: string
+          description: Stripe PaymentIntent ID
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        error_message:
+          type: string
+          description: Error details if failed
+        stripe_checkout_session_id:
+          type: string
+          description: Stripe Checkout Session ID
+        stripe_payment_intent_id:
+          type: string
+          description: Stripe PaymentIntent ID
+        stripe_refund_id:
+          type: string
+          description: Stripe Refund ID (if refunded)
+        refund_amount:
+          type: integer
+          minimum: 0
+          description: Refund amount in EUR cents
+        refunded_at:
+          type: string
+          format: date-time
+          description: Refund timestamp
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error_code
+        - message
+        - recovery
+      properties:
+        success:
+          type: boolean
+          const: false
+        error_code:
+          type: string
+        message:
+          type: string
+        recovery:
+          type: string
+        details:
+          type: object
+          additionalProperties: true

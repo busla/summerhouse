@@ -70,6 +70,16 @@ output "oauth2_sessions_table_arn" {
   value       = module.oauth2_sessions.dynamodb_table_arn
 }
 
+output "stripe_webhook_events_table_name" {
+  description = "Name of the Stripe webhook events table"
+  value       = module.stripe_webhook_events.dynamodb_table_id
+}
+
+output "stripe_webhook_events_table_arn" {
+  description = "ARN of the Stripe webhook events table"
+  value       = module.stripe_webhook_events.dynamodb_table_arn
+}
+
 output "table_arns" {
   description = "List of all table ARNs for IAM policies"
   value = [
@@ -80,6 +90,7 @@ output "table_arns" {
     module.payments.dynamodb_table_arn,
     module.verification_codes.dynamodb_table_arn,
     module.oauth2_sessions.dynamodb_table_arn,
+    module.stripe_webhook_events.dynamodb_table_arn,
   ]
 }
 

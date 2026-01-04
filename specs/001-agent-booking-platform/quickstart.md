@@ -34,7 +34,12 @@
    aws configure sso
    ```
 
-3. **Bedrock Model Access**:
+3. **Stripe Account** (for payment processing):
+   - Sign up at [stripe.com](https://stripe.com)
+   - Get API keys from Dashboard → Developers → API keys
+   - Both test and live keys needed for dev/prod environments
+
+4. **Bedrock Model Access**:
    - Enable Claude Sonnet in AWS Bedrock console
    - Region: us-east-1 (or your preferred region)
 
@@ -148,6 +153,58 @@ Or set in `infrastructure/environments/dev.tfvars` / `prod.tfvars` as `agentcore
 | `task tf:output:<env>` | Show Terraform outputs |
 
 **Examples**: `task tf:plan:dev`, `task tf:apply:prod`
+
+### 5. Stripe Payment Setup
+
+Stripe API credentials are stored securely in AWS SSM Parameter Store.
+
+**Store Stripe API Keys in SSM**:
+```bash
+# Development environment
+aws ssm put-parameter \
+  --name "/booking/dev/stripe/secret_key" \
+  --type "SecureString" \
+  --value "sk_test_your_test_secret_key" \
+  --description "Stripe test secret key for dev"
+
+aws ssm put-parameter \
+  --name "/booking/dev/stripe/webhook_secret" \
+  --type "SecureString" \
+  --value "whsec_your_webhook_signing_secret" \
+  --description "Stripe webhook signing secret for dev"
+
+# Production environment (use live keys)
+aws ssm put-parameter \
+  --name "/booking/prod/stripe/secret_key" \
+  --type "SecureString" \
+  --value "sk_live_your_live_secret_key" \
+  --description "Stripe live secret key for prod"
+
+aws ssm put-parameter \
+  --name "/booking/prod/stripe/webhook_secret" \
+  --type "SecureString" \
+  --value "whsec_your_prod_webhook_secret" \
+  --description "Stripe webhook signing secret for prod"
+```
+
+**Configure Stripe Webhook** (after deployment):
+1. Go to Stripe Dashboard → Developers → Webhooks
+2. Add endpoint: `https://your-api-domain/webhooks/stripe`
+3. Select events:
+   - `checkout.session.completed`
+   - `checkout.session.expired`
+   - `payment_intent.succeeded`
+   - `payment_intent.payment_failed`
+   - `charge.refunded`
+4. Copy the webhook signing secret to SSM (as shown above)
+
+**Verify SSM Parameters**:
+```bash
+# List stored parameters (values are encrypted)
+aws ssm get-parameters-by-path \
+  --path "/booking/dev/stripe" \
+  --with-decryption
+```
 
 ## Running Locally
 
@@ -340,6 +397,9 @@ curl -X POST http://localhost:3001/api/chat \
 | `Rate limit exceeded` | Too many Cognito requests | Wait or increase Cognito limits |
 | `Yarn: command not found` | Corepack not enabled | `corepack enable` |
 | `Yarn PnP errors` | nodeLinker not set | Add `nodeLinker: node-modules` to `.yarnrc.yml` |
+| `Stripe: Invalid API key` | SSM parameter missing/wrong | Verify `/booking/{env}/stripe/secret_key` in SSM |
+| `Stripe: Invalid webhook signature` | Wrong signing secret | Check `/booking/{env}/stripe/webhook_secret` in SSM |
+| `Payment failed: card_declined` | Test card not accepted | Use Stripe test card `4242 4242 4242 4242` |
 
 ### Debug Mode
 
@@ -429,3 +489,6 @@ After completing setup:
 - [terraform-aws-agentcore README](~/code/apro/agentcore-sandbox/terraform-aws-agentcore/README.md)
 - [AWS Cognito Custom Auth](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-challenge.html)
 - [DynamoDB Best Practices](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/best-practices.html)
+- [Stripe Checkout Integration](https://stripe.com/docs/payments/checkout)
+- [Stripe Webhooks](https://stripe.com/docs/webhooks)
+- [Stripe Test Cards](https://stripe.com/docs/testing#cards)

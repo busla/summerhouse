@@ -38,9 +38,59 @@ class PaymentService:
         """
         self.db = db
 
-    def _generate_payment_id(self) -> str:
-        """Generate a unique payment/transaction ID."""
-        return f"TXN-{uuid.uuid4().hex[:12].upper()}"
+    def _generate_payment_id(self, prefix: str = "TXN") -> str:
+        """Generate a unique payment/transaction ID.
+
+        Args:
+            prefix: ID prefix (TXN for mock, PAY for Stripe)
+
+        Returns:
+            Unique ID like TXN-ABC123DEF456 or PAY-ABC123DEF456
+        """
+        return f"{prefix}-{uuid.uuid4().hex[:12].upper()}"
+
+    def create_pending_stripe_payment(
+        self,
+        reservation_id: str,
+        amount_cents: int,
+        checkout_session_id: str,
+        payment_intent_id: str | None = None,
+    ) -> Payment:
+        """Create a pending payment record for Stripe Checkout.
+
+        This is called when creating a Stripe Checkout session. The payment
+        starts in PENDING status and will be updated to COMPLETED by the
+        webhook handler when Stripe confirms the payment.
+
+        Args:
+            reservation_id: Reservation being paid for
+            amount_cents: Payment amount in EUR cents
+            checkout_session_id: Stripe Checkout Session ID
+            payment_intent_id: Stripe PaymentIntent ID (if available)
+
+        Returns:
+            Created Payment record with PENDING status
+        """
+        payment_id = self._generate_payment_id(prefix="PAY")
+        now = dt.datetime.now(dt.UTC)
+
+        payment = Payment(
+            payment_id=payment_id,
+            reservation_id=reservation_id,
+            amount=amount_cents,
+            currency="EUR",
+            status=TransactionStatus.PENDING,
+            payment_method=PaymentMethod.CARD,  # Stripe Checkout is card-based
+            provider=PaymentProvider.STRIPE,
+            provider_transaction_id=checkout_session_id,
+            created_at=now,
+            completed_at=None,  # Set by webhook when payment completes
+        )
+
+        # Store payment record
+        self.db.put_item(self.PAYMENTS_TABLE, self._payment_to_item(payment))
+
+        return payment
 
     def process_payment(
         self,
@@ -232,6 +282,36 @@ class PaymentService:
 
     # Conversion helpers
 
+    def update_payment_refund(
+        self,
+        payment_id: str,
+        refund_amount: int,
+        stripe_refund_id: str,
+        refunded_at: dt.datetime,
+    ) -> None:
+        """Update payment record with refund details.
+
+        Updates the payment status to REFUNDED and stores refund metadata.
+
+        Args:
+            payment_id: Payment ID to update
+            refund_amount: Refund amount in cents
+            stripe_refund_id: Stripe Refund ID (e.g., re_xxx)
+            refunded_at: Timestamp of refund
+        """
+        self.db.update_item(
+            self.PAYMENTS_TABLE,
+            {"payment_id": payment_id},
+            "SET #status = :status, refund_amount = :amount, stripe_refund_id = :rid, refunded_at = :rat",
+            {
+                ":status": TransactionStatus.REFUNDED.value,
+                ":amount": refund_amount,
+                ":rid": stripe_refund_id,
+                ":rat": refunded_at.isoformat(),
+            },
+            {"#status": "status"},  # status is a reserved word
+        )
+
     def _payment_to_item(self, payment: Payment) -> dict[str, Any]:
         """Convert Payment model to DynamoDB item."""
         item: dict[str, Any] = {
@@ -250,10 +330,24 @@ class PaymentService:
             item["completed_at"] = payment.completed_at.isoformat()
         if payment.error_message:
             item["error_message"] = payment.error_message
+        # Stripe-specific fields
+        if payment.stripe_checkout_session_id:
+            item["stripe_checkout_session_id"] = payment.stripe_checkout_session_id
+        if payment.stripe_payment_intent_id:
+            item["stripe_payment_intent_id"] = payment.stripe_payment_intent_id
+        if payment.stripe_refund_id:
+            item["stripe_refund_id"] = payment.stripe_refund_id
+        if payment.refund_amount is not None:
+            item["refund_amount"] = payment.refund_amount
+        if payment.refunded_at:
+            item["refunded_at"] = payment.refunded_at.isoformat()
         return item
 
     def _item_to_payment(self, item: dict[str, Any]) -> Payment:
-        """Convert DynamoDB item to Payment model."""
+        """Convert DynamoDB item to Payment model.
+
+        Maps all fields including Stripe-specific fields for FR-028.
+        """
         return Payment(
             payment_id=item["payment_id"],
             reservation_id=item["reservation_id"],
@@ -270,4 +364,16 @@ class PaymentService:
                 else None
             ),
             error_message=item.get("error_message"),
+            # Stripe-specific fields (FR-028)
+            stripe_checkout_session_id=item.get("stripe_checkout_session_id"),
+            stripe_payment_intent_id=item.get("stripe_payment_intent_id"),
+            stripe_refund_id=item.get("stripe_refund_id"),
+            refund_amount=(
+                int(item["refund_amount"]) if item.get("refund_amount") else None
+            ),
+            refunded_at=(
+                dt.datetime.fromisoformat(item["refunded_at"])
+                if item.get("refunded_at")
+                else None
+            ),
         )
