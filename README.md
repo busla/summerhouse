@@ -47,6 +47,17 @@ An AI agent-driven vacation rental booking platform for a single apartment in Qu
 - Responsive map interactions (zoom, pan)
 - Mobile-touch optimized
 
+### Payment Processing (`/booking/checkout`)
+- Stripe Checkout integration for secure card payments
+- Real-time payment status updates via webhooks
+- Maximum 3 payment retry attempts per reservation
+- Refund policy-based cancellation:
+  - 14+ days before check-in: Full refund (100%)
+  - 7-13 days before check-in: Partial refund (50%)
+  - Less than 7 days before check-in: No refund
+- Idempotent webhook handling with duplicate event detection
+- Webhook events tracked with 90-day TTL for compliance
+
 ### Additional Pages
 - **Pricing** (`/pricing`): Seasonal rates and minimum stay requirements
 - **About** (`/about`): Property description and story
@@ -77,9 +88,11 @@ An AI agent-driven vacation rental booking platform for a single apartment in Qu
 - **Package Manager**: UV workspaces (3 packages: shared, api, agent)
 - **Data Validation**: Pydantic v2 (strict mode)
 - **LLM**: Amazon Bedrock (Claude Sonnet)
-- **Database**: AWS DynamoDB (6 tables)
+- **Database**: AWS DynamoDB (7 tables including webhook events)
 - **Auth**: AWS Cognito (passwordless email OTP, customer profile schema with email, name, phone_number)
 - **Agent Runtime**: AWS Bedrock AgentCore Runtime
+- **Payments**: Stripe (Checkout sessions, refunds, webhook handling)
+- **Secrets**: AWS SSM Parameter Store (Stripe API keys)
 
 ### Infrastructure
 - **IaC**: Terraform with cloudposse modules and terraform-aws-modules
@@ -359,7 +372,17 @@ Note: Email verification is now handled via AWS Amplify's native EMAIL_OTP authe
 - `PATCH /api/reservations/{id}` - Modify reservation
 - `DELETE /api/reservations/{id}` - Cancel reservation
 - `GET /api/reservations/{id}` - Get reservation details
-- `POST /api/payments` - Process payment
+
+### Payment Endpoints (JWT required)
+- `POST /api/payments/checkout-session` - Create Stripe Checkout session for payment
+- `POST /api/payments` - Process payment (legacy)
+- `GET /api/payments/{reservation_id}` - Get payment status
+- `GET /api/payments/{reservation_id}/history` - Get payment history
+- `POST /api/payments/{reservation_id}/retry` - Retry failed payment via Checkout
+- `POST /api/payments/refund/{payment_id}` - Initiate refund (refund policy enforced)
+
+### Webhook Endpoints (no auth required)
+- `POST /api/webhooks/stripe` - Receive Stripe webhook events (signature verified)
 
 ## AI Agent Tools
 
@@ -414,8 +437,9 @@ Available in `/agent` chat interface:
 | `booking-{env}-customers` | `customer_id` | — | Customer profiles |
 | `booking-{env}-availability` | `date` | — | Date availability flags |
 | `booking-{env}-pricing` | `season_id` | — | Seasonal pricing tiers |
-| `booking-{env}-payments` | `payment_id` | — | Payment records |
+| `booking-{env}-payments` | `payment_id` | — | Payment records (Stripe integration) |
 | `booking-{env}-verification-codes` | `email` | — | OTP codes (TTL: 10 min) |
+| `booking-{env}-stripe-webhook-events` | `event_id` | — | Webhook events for idempotency (TTL: 90 days) |
 
 ### Reservation Schema
 
@@ -456,12 +480,25 @@ DYNAMODB_AVAILABILITY_TABLE=booking-dev-availability
 DYNAMODB_PRICING_TABLE=booking-dev-pricing
 DYNAMODB_PAYMENTS_TABLE=booking-dev-payments
 DYNAMODB_VERIFICATION_CODES_TABLE=booking-dev-verification-codes
+DYNAMODB_STRIPE_WEBHOOK_EVENTS_TABLE=booking-dev-stripe-webhook-events
 COGNITO_USER_POOL_ID=eu-west-1_xxxxx
 COGNITO_CLIENT_ID=xxxxx
 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-20250514
 LOG_LEVEL=INFO
 JWT_SECRET=your-secret-key-here
+ENVIRONMENT=dev
+FRONTEND_URL=http://localhost:3000
 ```
+
+**Stripe Configuration** (stored in AWS SSM Parameter Store):
+```
+/booking/dev/stripe/secret_key     - Stripe secret API key (SecureString)
+/booking/dev/stripe/webhook_secret - Stripe webhook signing secret (SecureString)
+/booking/prod/stripe/secret_key    - Stripe secret API key for prod (SecureString)
+/booking/prod/stripe/webhook_secret - Stripe webhook signing secret for prod (SecureString)
+```
+
+**Note**: Stripe keys are retrieved from SSM Parameter Store instead of .env for security. Ensure these parameters exist before running the payment endpoints.
 
 ## Features Matrix
 
@@ -483,6 +520,10 @@ JWT_SECRET=your-secret-key-here
 | Mobile Responsive | ✓ Complete | Tailwind-based design |
 | Accessibility (WCAG AA) | ✓ Complete | Keyboard nav, screen reader support |
 | E2E Tests | ✓ Complete | Direct booking flow coverage |
+| Stripe Payments | ✓ Complete | Checkout sessions, refunds, webhook handling |
+| Payment Retry | ✓ Complete | Max 3 attempts per reservation |
+| Refund Policy | ✓ Complete | Policy-based refund calculation (14d, 7d tiers) |
+| Webhook Handling | ✓ Complete | Idempotent event processing with deduplication |
 
 ## Testing
 
@@ -568,6 +609,21 @@ task frontend:test:e2e:live
 - Check CloudWatch logs for agent Lambda errors
 - Verify conversation history is being stored
 
+### Payment not processing?
+- Verify Stripe API keys are stored in SSM Parameter Store: `/booking/{env}/stripe/secret_key`
+- Check that webhook endpoint is configured in Stripe Dashboard: `POST /api/webhooks/stripe`
+- Verify webhook signing secret matches: `/booking/{env}/stripe/webhook_secret`
+- Check DynamoDB `booking-{env}-payments` and `booking-{env}-stripe-webhook-events` tables exist
+- Review CloudWatch logs for StripeServiceError messages
+- Ensure checkout session URLs redirect to valid domain (configured in `FRONTEND_URL`)
+
+### Refund not processing?
+- Verify payment is in "completed" status before attempting refund
+- Check that refund policy allows refund for the check-in date
+- Verify Stripe PaymentIntent ID is stored in payment record
+- Check CloudWatch logs for refund-related errors
+- Ensure customer owns the reservation they're refunding
+
 ## Roadmap
 
 ### MVP (Current)
@@ -578,9 +634,12 @@ task frontend:test:e2e:live
 - Location map with POI
 - Email OTP verification
 - Static placeholder pages (Pricing, About, Area Guide, FAQ, Contact)
+- Stripe payment processing with Checkout
+- Payment retry mechanism (max 3 attempts)
+- Refund policy enforcement (14-day, 7-day cancellation tiers)
+- Webhook handling with idempotency
 
 ### Phase 2 (Future)
-- Payment processing (currently mocked)
 - Guest management dashboard
 - Admin booking management interface
 - SMS notifications for bookings

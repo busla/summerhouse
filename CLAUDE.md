@@ -467,6 +467,8 @@ This project follows the Booking Constitution (v1.1.0):
 - AWS DynamoDB (`customers` table - renamed from `guests`), AWS Cognito (all profile fields: email, phone_number, name) (011-cleanup-shadcn-auth)
 - TypeScript 5.x (frontend), HCL/Terraform >= 1.5.0 (infrastructure) + Next.js 14+ (App Router), React, terraform-aws-modules/cloudfron (012-fix-routing-waf)
 - Browser sessionStorage (form data), S3 (static files) (012-fix-routing-waf)
+- Python 3.13+ (backend only - no frontend changes required) + FastAPI, stripe (Python SDK), boto3 (SSM), Pydantic v2 (strict mode) (013-stripe-payment)
+- DynamoDB (`booking-{env}-payments` table with GSI for reservation lookups) (013-stripe-payment)
 
 ## Recent Changes
 - 008-rest-api-gateway: Migrate gateway-v2 module from HTTP API to REST API; Cognito User Pools authorizer, explicit OPTIONS methods for CORS, deployment triggers

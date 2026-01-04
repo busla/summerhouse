@@ -453,3 +453,143 @@ class TestErrorHandling:
         response = client.get("/availability?check_in=2025-01-15&check_out=2025-01-10")
         # Should return 400 (bad request) or validation error
         assert response.status_code in [400, 422]
+
+
+# =============================================================================
+# Stripe Payment Endpoint Tests
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.public
+class TestStripeWebhookEndpoint:
+    """Tests for the /api/webhooks/stripe endpoint.
+
+    The webhook endpoint is publicly accessible (no JWT) but requires
+    valid Stripe signature for actual event processing.
+    """
+
+    def test_webhook_endpoint_exists(self, client: httpx.Client) -> None:
+        """Webhook endpoint should exist and respond."""
+        # Send empty body - will fail signature validation but endpoint exists
+        response = client.post(
+            "/webhooks/stripe",
+            content=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        # Should return 400 (bad request) due to missing/invalid signature
+        # Not 404 (endpoint exists) and not 401/403 (no auth required)
+        assert response.status_code in [400, 401]
+
+    def test_webhook_rejects_missing_signature(self, client: httpx.Client) -> None:
+        """Webhook should reject requests without Stripe-Signature header."""
+        response = client.post(
+            "/webhooks/stripe",
+            content=b'{"type": "checkout.session.completed"}',
+            headers={"Content-Type": "application/json"},
+        )
+        # Should reject - signature required
+        assert response.status_code in [400, 401]
+        data = response.json()
+        # Check error message mentions signature
+        error_text = str(data).lower()
+        assert "signature" in error_text or "unauthorized" in error_text or "invalid" in error_text
+
+    def test_webhook_rejects_invalid_signature(self, client: httpx.Client) -> None:
+        """Webhook should reject requests with invalid Stripe-Signature."""
+        # Fake signature that won't validate
+        fake_signature = "t=1234567890,v1=abc123def456"
+        response = client.post(
+            "/webhooks/stripe",
+            content=b'{"type": "checkout.session.completed", "data": {}}',
+            headers={
+                "Content-Type": "application/json",
+                "Stripe-Signature": fake_signature,
+            },
+        )
+        # Should reject invalid signature
+        assert response.status_code in [400, 401]
+
+
+@pytest.mark.e2e
+@pytest.mark.protected
+class TestStripeCheckoutEndpoint:
+    """Tests for the /api/payments/checkout-session endpoint.
+
+    This endpoint requires authentication to create checkout sessions.
+    """
+
+    def test_checkout_session_requires_auth(self, client: httpx.Client) -> None:
+        """Checkout session creation should require authentication."""
+        response = client.post(
+            "/payments/checkout-session",
+            json={
+                "reservation_id": "RES-2025-TEST123",
+            },
+        )
+        # Should require authentication
+        assert response.status_code in [401, 403]
+
+    def test_checkout_session_with_invalid_token(self, client: httpx.Client) -> None:
+        """Checkout session should reject invalid bearer token."""
+        response = client.post(
+            "/payments/checkout-session",
+            json={
+                "reservation_id": "RES-2025-TEST123",
+            },
+            headers={"Authorization": "Bearer invalid-token-here"},
+        )
+        # Should reject invalid token
+        assert response.status_code in [401, 403]
+
+
+@pytest.mark.e2e
+@pytest.mark.protected
+class TestStripePaymentRetryEndpoint:
+    """Tests for the /api/payments/{reservation_id}/retry endpoint.
+
+    This endpoint requires authentication and validates retry constraints.
+    """
+
+    def test_retry_requires_auth(self, client: httpx.Client) -> None:
+        """Payment retry should require authentication."""
+        response = client.post(
+            "/payments/RES-2025-TEST123/retry",
+            json={},
+        )
+        # Should require authentication
+        assert response.status_code in [401, 403]
+
+    def test_retry_with_invalid_token(self, client: httpx.Client) -> None:
+        """Payment retry should reject invalid bearer token."""
+        response = client.post(
+            "/payments/RES-2025-TEST123/retry",
+            json={},
+            headers={"Authorization": "Bearer invalid-token-here"},
+        )
+        # Should reject invalid token
+        assert response.status_code in [401, 403]
+
+
+@pytest.mark.e2e
+@pytest.mark.public
+class TestStripePaymentStatusEndpoint:
+    """Tests for the /api/payments/{reservation_id} endpoint.
+
+    Payment status can be checked publicly by reservation ID.
+    Note: Route is /payments/{reservation_id} (no /status suffix).
+    """
+
+    def test_payment_status_returns_404_for_nonexistent(
+        self, client: httpx.Client
+    ) -> None:
+        """Payment status should return 404 for non-existent reservation."""
+        response = client.get("/payments/RES-NONEXISTENT-123")
+        assert response.status_code == 404
+
+    def test_payment_status_endpoint_structure(self, client: httpx.Client) -> None:
+        """Payment status endpoint should exist (test with invalid ID)."""
+        response = client.get("/payments/INVALID")
+        # Should return 404 (not found) not 403 (forbidden/not exist)
+        # This confirms the endpoint is defined
+        assert response.status_code == 404

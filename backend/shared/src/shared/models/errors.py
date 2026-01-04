@@ -33,6 +33,11 @@ class ErrorCode(str, Enum):
     AUTH_CANCELLED = "ERR_AUTH_007"
     USER_MISMATCH = "ERR_AUTH_008"
 
+    # Stripe/Payment error codes (ERR_STRIPE_001-ERR_STRIPE_003)
+    INVALID_WEBHOOK_SIGNATURE = "ERR_STRIPE_001"
+    STRIPE_API_ERROR = "ERR_STRIPE_002"
+    RESERVATION_NOT_PAYABLE = "ERR_STRIPE_003"
+
 
 # Human-readable error messages
 ERROR_MESSAGES: dict[ErrorCode, str] = {
@@ -54,6 +59,10 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.SESSION_EXPIRED: "Authentication session has expired",
     ErrorCode.AUTH_CANCELLED: "Authentication was cancelled by user",
     ErrorCode.USER_MISMATCH: "User identity does not match the expected user",
+    # Stripe errors
+    ErrorCode.INVALID_WEBHOOK_SIGNATURE: "Invalid webhook signature",
+    ErrorCode.STRIPE_API_ERROR: "Stripe API error occurred",
+    ErrorCode.RESERVATION_NOT_PAYABLE: "Reservation is not in a payable state",
 }
 
 # Recovery suggestions for agents
@@ -76,6 +85,10 @@ ERROR_RECOVERY: dict[ErrorCode, str] = {
     ErrorCode.SESSION_EXPIRED: "Start a new login flow",
     ErrorCode.AUTH_CANCELLED: "Offer to restart authentication if needed",
     ErrorCode.USER_MISMATCH: "Restart authentication with the correct email",
+    # Stripe error recovery
+    ErrorCode.INVALID_WEBHOOK_SIGNATURE: "Verify webhook secret configuration",
+    ErrorCode.STRIPE_API_ERROR: "Try again or contact support",
+    ErrorCode.RESERVATION_NOT_PAYABLE: "Verify reservation status is pending",
 }
 
 
@@ -137,3 +150,63 @@ class BookingError(Exception):
     def to_tool_error(self) -> ToolError:
         """Convert this exception to a ToolError for tool responses."""
         return ToolError.from_code(self.code, self.details)
+
+
+# Stripe error code to user-friendly message mapping (FR-023)
+# Maps Stripe's error codes to messages suitable for end users
+STRIPE_ERROR_MESSAGES: dict[str, str] = {
+    # Card errors - user can fix
+    "card_declined": "Your card was declined. Please try a different card.",
+    "expired_card": "Your card has expired. Please use a different card.",
+    "insufficient_funds": "Your card has insufficient funds. Please try a different card.",
+    "incorrect_cvc": "The security code (CVC) is incorrect. Please check and try again.",
+    "incorrect_number": "The card number is incorrect. Please check and try again.",
+    "invalid_cvc": "The security code (CVC) is invalid. Please check and try again.",
+    "invalid_expiry_month": "The expiration month is invalid. Please check and try again.",
+    "invalid_expiry_year": "The expiration year is invalid. Please check and try again.",
+    "invalid_number": "The card number is invalid. Please check and try again.",
+    "card_velocity_exceeded": "Too many card transactions. Please wait and try again later.",
+    # Processing errors - may be retryable
+    "processing_error": "A processing error occurred. Please try again.",
+    "rate_limit": "Too many requests. Please wait a moment and try again.",
+    # Generic fallback
+    "generic_decline": "Your card was declined. Please try a different card.",
+}
+
+# Stripe error codes that indicate the user should retry
+STRIPE_RETRYABLE_ERRORS: set[str] = {
+    "processing_error",
+    "rate_limit",
+    "lock_timeout",
+    "api_connection_error",
+}
+
+
+def get_user_friendly_stripe_message(
+    stripe_error_code: Optional[str],
+    default_message: str = "Payment could not be processed. Please try again.",
+) -> str:
+    """Get a user-friendly message for a Stripe error code (FR-023).
+
+    Args:
+        stripe_error_code: The Stripe error code (e.g., 'card_declined').
+        default_message: Message to use if error code is unknown.
+
+    Returns:
+        User-friendly error message.
+    """
+    if stripe_error_code and stripe_error_code in STRIPE_ERROR_MESSAGES:
+        return STRIPE_ERROR_MESSAGES[stripe_error_code]
+    return default_message
+
+
+def is_stripe_error_retryable(stripe_error_code: Optional[str]) -> bool:
+    """Check if a Stripe error is likely transient and retryable.
+
+    Args:
+        stripe_error_code: The Stripe error code.
+
+    Returns:
+        True if the error may be resolved by retrying.
+    """
+    return stripe_error_code in STRIPE_RETRYABLE_ERRORS if stripe_error_code else False

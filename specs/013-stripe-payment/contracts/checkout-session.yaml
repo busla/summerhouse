@@ -1,0 +1,249 @@
+openapi: 3.1.0
+info:
+  title: Stripe Checkout Session API
+  description: |
+    Creates Stripe Checkout sessions for reservation payments.
+
+    This endpoint creates a new Stripe Checkout session and returns
+    the checkout URL for redirecting the user to Stripe's hosted
+    payment page.
+  version: 1.0.0
+
+servers:
+  - url: https://api.booking.example/api
+    description: Production server
+  - url: https://api-dev.booking.example/api
+    description: Development server
+  - url: http://localhost:3001/api
+    description: Local development
+
+tags:
+  - name: Payments
+    description: Payment processing endpoints
+
+paths:
+  /payments/checkout-session:
+    post:
+      tags:
+        - Payments
+      summary: Create Stripe Checkout session
+      description: |
+        Creates a Stripe Checkout session for a reservation payment.
+
+        **Authentication**: JWT required (reservation owner only)
+
+        **Flow**:
+        1. Validates reservation exists and belongs to authenticated user
+        2. Validates reservation is in payable state (pending, not cancelled)
+        3. Creates Stripe Checkout session with reservation amount
+        4. Creates Payment record with status=pending
+        5. Returns checkout URL for redirect
+
+        **Idempotency**: Uses reservation_id as idempotency key.
+        Creating a session for the same reservation returns existing
+        active session if still valid (not expired).
+
+        **Session Expiry**: 30 minutes from creation (FR-003)
+      operationId: createCheckoutSession
+      security:
+        - cognitoJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutSessionRequest'
+            examples:
+              withUrls:
+                summary: With custom redirect URLs
+                value:
+                  reservation_id: "RES-2026-ABC123"
+                  success_url: "https://summerhouse.example/booking/success?session_id={CHECKOUT_SESSION_ID}"
+                  cancel_url: "https://summerhouse.example/booking/cancel"
+              minimalRequest:
+                summary: Minimal request (default URLs)
+                value:
+                  reservation_id: "RES-2026-ABC123"
+      responses:
+        '201':
+          description: Checkout session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutSessionResponse'
+              example:
+                payment_id: "PAY-2026-ABC123"
+                checkout_session_id: "cs_test_abc123def456"
+                checkout_url: "https://checkout.stripe.com/c/pay/cs_test_abc123def456"
+                expires_at: "2026-01-03T10:30:00Z"
+                amount: 112500
+                currency: "EUR"
+        '400':
+          description: Invalid request (reservation not payable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                alreadyPaid:
+                  summary: Reservation already paid
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "Reservation is already paid"
+                    recovery: "No action needed - reservation is confirmed"
+                cancelled:
+                  summary: Reservation cancelled
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "Cannot pay for cancelled reservations"
+                    recovery: "Create a new reservation"
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_AUTH"
+                message: "JWT token required"
+                recovery: "Sign in to continue"
+        '403':
+          description: Not authorized (not reservation owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_007"
+                message: "You can only pay for your own reservations"
+                recovery: "Verify you're signed in with the correct account"
+        '404':
+          description: Reservation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_006"
+                message: "Reservation not found"
+                recovery: "Verify the reservation ID"
+                details:
+                  reservation_id: "RES-2026-INVALID"
+        '503':
+          description: Stripe service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_STRIPE"
+                message: "Payment service temporarily unavailable"
+                recovery: "Please try again in a few moments"
+
+components:
+  schemas:
+    CheckoutSessionRequest:
+      type: object
+      required:
+        - reservation_id
+      properties:
+        reservation_id:
+          type: string
+          description: Reservation ID to pay for
+          examples:
+            - "RES-2026-ABC123"
+        success_url:
+          type: string
+          format: uri
+          description: |
+            URL to redirect after successful payment.
+            Use {CHECKOUT_SESSION_ID} placeholder for session ID.
+          examples:
+            - "https://summerhouse.example/booking/success?session_id={CHECKOUT_SESSION_ID}"
+        cancel_url:
+          type: string
+          format: uri
+          description: URL to redirect if payment is cancelled
+          examples:
+            - "https://summerhouse.example/booking/cancel"
+
+    CheckoutSessionResponse:
+      type: object
+      required:
+        - payment_id
+        - checkout_session_id
+        - checkout_url
+        - expires_at
+        - amount
+        - currency
+      properties:
+        payment_id:
+          type: string
+          description: Internal payment ID for tracking
+          examples:
+            - "PAY-2026-ABC123"
+        checkout_session_id:
+          type: string
+          description: Stripe Checkout Session ID
+          examples:
+            - "cs_test_abc123def456"
+        checkout_url:
+          type: string
+          format: uri
+          description: URL to redirect user to Stripe Checkout
+          examples:
+            - "https://checkout.stripe.com/c/pay/cs_test_abc123"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the checkout session expires (30 minutes)
+        amount:
+          type: integer
+          minimum: 0
+          description: Payment amount in EUR cents
+          examples:
+            - 112500
+        currency:
+          type: string
+          default: "EUR"
+          description: Currency code
+          examples:
+            - "EUR"
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error_code
+        - message
+        - recovery
+      properties:
+        success:
+          type: boolean
+          const: false
+        error_code:
+          type: string
+          description: Error code (ERR_XXX format)
+        message:
+          type: string
+          description: Human-readable error message
+        recovery:
+          type: string
+          description: Suggested recovery action
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error context
+
+  securitySchemes:
+    cognitoJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito JWT token with openid scope

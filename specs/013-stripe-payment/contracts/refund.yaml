@@ -1,0 +1,287 @@
+openapi: 3.1.0
+info:
+  title: Payment Refund API
+  description: |
+    Process refunds for completed payments via Stripe.
+
+    Refunds follow the cancellation policy:
+    - 14+ days before check-in: Full refund
+    - 7-14 days before check-in: 50% refund
+    - Less than 7 days: No refund
+  version: 1.0.0
+
+servers:
+  - url: https://api.booking.example/api
+    description: Production server
+  - url: https://api-dev.booking.example/api
+    description: Development server
+  - url: http://localhost:3001/api
+    description: Local development
+
+tags:
+  - name: Payments
+    description: Payment processing endpoints
+
+paths:
+  /payments/{payment_id}/refund:
+    post:
+      tags:
+        - Payments
+      summary: Process refund for payment
+      description: |
+        Initiates a refund for a completed payment via Stripe.
+
+        **Authentication**: JWT required (reservation owner or admin)
+
+        **Refund Policy** (FR-015, FR-016):
+        - 14+ days before check-in: Full refund (100%)
+        - 7-14 days before check-in: Partial refund (50%)
+        - Less than 7 days: No refund allowed
+
+        **Flow**:
+        1. Validates payment exists and is completed
+        2. Calculates refund amount based on cancellation policy
+        3. Creates Stripe refund via API
+        4. Updates payment record with refund details
+        5. Updates reservation status to cancelled
+
+        **Notes**:
+        - Refund amount can be specified for partial refunds
+        - If amount not specified, uses cancellation policy calculation
+        - Refunds typically take 5-10 business days to appear (Stripe standard)
+      operationId: processRefund
+      security:
+        - cognitoJwt: []
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          description: Payment ID to refund
+          schema:
+            type: string
+          example: "PAY-2026-ABC123"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+            examples:
+              fullRefund:
+                summary: Full refund (policy-based)
+                value:
+                  reason: "Customer cancelled 20 days before check-in"
+              partialRefund:
+                summary: Explicit partial refund
+                value:
+                  amount: 56250
+                  reason: "Customer cancelled 10 days before check-in (50% refund policy)"
+              noReason:
+                summary: Refund without reason
+                value: {}
+      responses:
+        '200':
+          description: Refund processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+              examples:
+                fullRefund:
+                  summary: Full refund processed
+                  value:
+                    payment_id: "PAY-2026-ABC123"
+                    stripe_refund_id: "re_3ABC123DEF456"
+                    amount: 112500
+                    status: "succeeded"
+                    refunded_at: "2026-01-03T14:30:00Z"
+                    refund_policy: "full_refund"
+                    original_amount: 112500
+                partialRefund:
+                  summary: 50% partial refund
+                  value:
+                    payment_id: "PAY-2026-ABC123"
+                    stripe_refund_id: "re_3ABC123DEF456"
+                    amount: 56250
+                    status: "succeeded"
+                    refunded_at: "2026-01-03T14:30:00Z"
+                    refund_policy: "partial_refund_50"
+                    original_amount: 112500
+        '400':
+          description: Invalid refund request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notCompleted:
+                  summary: Payment not completed
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "Cannot refund payment with status: pending"
+                    recovery: "Wait for payment to complete before requesting refund"
+                alreadyRefunded:
+                  summary: Already refunded
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "Payment has already been refunded"
+                    recovery: "No action needed"
+                    details:
+                      stripe_refund_id: "re_3ABC123DEF456"
+                      refunded_at: "2026-01-03T14:30:00Z"
+                amountTooLarge:
+                  summary: Refund exceeds payment
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "Refund amount (150000) exceeds payment amount (112500)"
+                    recovery: "Specify a valid refund amount"
+                noRefundPolicy:
+                  summary: No refund allowed (< 7 days)
+                  value:
+                    success: false
+                    error_code: "ERR_400"
+                    message: "No refund allowed within 7 days of check-in"
+                    recovery: "Cancellation policy does not allow refunds at this time"
+                    details:
+                      check_in_date: "2026-01-05"
+                      days_until_checkin: 2
+                      policy: "no_refund"
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Not authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_007"
+                message: "You can only refund payments for your own reservations"
+                recovery: "Verify you're signed in with the correct account"
+        '404':
+          description: Payment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_404"
+                message: "Payment not found"
+                recovery: "Verify the payment ID"
+        '502':
+          description: Stripe refund failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_STRIPE"
+                message: "Refund failed: insufficient funds for refund"
+                recovery: "Please contact support for manual refund processing"
+                details:
+                  stripe_error_code: "charge_already_refunded"
+
+components:
+  schemas:
+    RefundRequest:
+      type: object
+      properties:
+        amount:
+          type: integer
+          minimum: 0
+          description: |
+            Refund amount in EUR cents.
+            If not provided, calculates based on cancellation policy:
+            - 14+ days: Full amount
+            - 7-14 days: 50% of amount
+            - <7 days: Refund not allowed
+          examples:
+            - 56250
+        reason:
+          type: string
+          maxLength: 500
+          description: Reason for refund (for record-keeping)
+          examples:
+            - "Customer cancelled 10 days before check-in (50% refund policy)"
+
+    RefundResponse:
+      type: object
+      required:
+        - payment_id
+        - stripe_refund_id
+        - amount
+        - status
+        - refunded_at
+      properties:
+        payment_id:
+          type: string
+          description: Original payment ID
+        stripe_refund_id:
+          type: string
+          description: Stripe Refund ID
+          examples:
+            - "re_3ABC123DEF456"
+        amount:
+          type: integer
+          minimum: 0
+          description: Refunded amount in EUR cents
+        status:
+          type: string
+          enum:
+            - succeeded
+            - pending
+            - failed
+          description: Refund status from Stripe
+        refunded_at:
+          type: string
+          format: date-time
+          description: When refund was processed
+        refund_policy:
+          type: string
+          enum:
+            - full_refund
+            - partial_refund_50
+            - manual_refund
+          description: Which refund policy was applied
+        original_amount:
+          type: integer
+          minimum: 0
+          description: Original payment amount in EUR cents
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error_code
+        - message
+        - recovery
+      properties:
+        success:
+          type: boolean
+          const: false
+        error_code:
+          type: string
+        message:
+          type: string
+        recovery:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+  securitySchemes:
+    cognitoJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito JWT token with openid scope

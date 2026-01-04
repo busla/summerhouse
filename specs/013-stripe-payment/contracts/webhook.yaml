@@ -1,0 +1,318 @@
+openapi: 3.1.0
+info:
+  title: Stripe Webhook API
+  description: |
+    Receives and processes Stripe webhook events.
+
+    This endpoint handles asynchronous payment notifications from Stripe,
+    including successful payments and refunds.
+  version: 1.0.0
+
+servers:
+  - url: https://api.booking.example/api
+    description: Production server
+  - url: https://api-dev.booking.example/api
+    description: Development server
+  - url: http://localhost:3001/api
+    description: Local development
+
+tags:
+  - name: Webhooks
+    description: Stripe webhook handlers
+
+paths:
+  /webhooks/stripe:
+    post:
+      tags:
+        - Webhooks
+      summary: Stripe webhook endpoint
+      description: |
+        Receives webhook events from Stripe.
+
+        **Security**: Validates Stripe signature (FR-011)
+        - Uses webhook secret from SSM: `/booking/{env}/stripe/webhook_secret`
+        - Returns 400 if signature is invalid
+
+        **Idempotency** (FR-014):
+        - Stores event_id in DynamoDB to prevent duplicate processing
+        - Returns 200 for duplicate events (safe to retry)
+
+        **Supported Events** (FR-012, FR-013):
+        - `checkout.session.completed`: Payment successful
+        - `charge.refunded`: Refund processed
+
+        **Processing Flow**:
+        1. Validate Stripe signature
+        2. Check for duplicate event (by event_id)
+        3. Extract reservation_id from metadata
+        4. Process based on event type
+        5. Store event in webhook log
+        6. Return 200 OK
+
+        **Performance** (SC-007): Processing completes within 5 seconds
+      operationId: handleStripeWebhook
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          description: |
+            Stripe webhook signature for validation.
+            Format: t={timestamp},v1={signature}
+          schema:
+            type: string
+          example: "t=1614556800,v1=abc123def456..."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StripeWebhookEvent'
+            examples:
+              checkoutCompleted:
+                summary: checkout.session.completed
+                value:
+                  id: "evt_1ABC123DEF456"
+                  type: "checkout.session.completed"
+                  created: 1704268800
+                  data:
+                    object:
+                      id: "cs_test_abc123"
+                      payment_intent: "pi_3ABC123DEF456"
+                      payment_status: "paid"
+                      amount_total: 112500
+                      currency: "eur"
+                      metadata:
+                        reservation_id: "RES-2026-ABC123"
+                        payment_id: "PAY-2026-DEF456"
+              chargeRefunded:
+                summary: charge.refunded
+                value:
+                  id: "evt_2DEF456GHI789"
+                  type: "charge.refunded"
+                  created: 1704355200
+                  data:
+                    object:
+                      id: "ch_3ABC123DEF456"
+                      payment_intent: "pi_3ABC123DEF456"
+                      amount_refunded: 56250
+                      refunds:
+                        data:
+                          - id: "re_3ABC123DEF456"
+                            amount: 56250
+                            status: "succeeded"
+                      metadata:
+                        reservation_id: "RES-2026-ABC123"
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+              examples:
+                success:
+                  summary: Event processed
+                  value:
+                    received: true
+                    event_id: "evt_1ABC123DEF456"
+                    event_type: "checkout.session.completed"
+                    processing_result: "success"
+                duplicate:
+                  summary: Duplicate event (idempotent)
+                  value:
+                    received: true
+                    event_id: "evt_1ABC123DEF456"
+                    event_type: "checkout.session.completed"
+                    processing_result: "duplicate"
+                    message: "Event already processed"
+                skipped:
+                  summary: Unhandled event type
+                  value:
+                    received: true
+                    event_id: "evt_3GHI789JKL012"
+                    event_type: "payment_intent.created"
+                    processing_result: "skipped"
+                    message: "Event type not handled"
+        '400':
+          description: Invalid webhook request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidSignature:
+                  summary: Invalid Stripe signature
+                  value:
+                    success: false
+                    error_code: "ERR_WEBHOOK"
+                    message: "Invalid webhook signature"
+                    recovery: "Verify webhook secret is configured correctly"
+                missingSignature:
+                  summary: Missing signature header
+                  value:
+                    success: false
+                    error_code: "ERR_WEBHOOK"
+                    message: "Missing Stripe-Signature header"
+                    recovery: "Ensure request is from Stripe"
+                invalidPayload:
+                  summary: Invalid JSON payload
+                  value:
+                    success: false
+                    error_code: "ERR_WEBHOOK"
+                    message: "Invalid webhook payload"
+                    recovery: "Ensure payload is valid JSON"
+        '500':
+          description: Processing error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error_code: "ERR_INTERNAL"
+                message: "Failed to process webhook event"
+                recovery: "Event will be retried by Stripe"
+
+components:
+  schemas:
+    StripeWebhookEvent:
+      type: object
+      description: |
+        Stripe webhook event structure.
+        See: https://stripe.com/docs/api/events/object
+      required:
+        - id
+        - type
+        - created
+        - data
+      properties:
+        id:
+          type: string
+          description: Unique event identifier
+          examples:
+            - "evt_1ABC123DEF456"
+        type:
+          type: string
+          description: Event type
+          enum:
+            - checkout.session.completed
+            - checkout.session.expired
+            - charge.refunded
+            - charge.refund.updated
+            - payment_intent.succeeded
+            - payment_intent.payment_failed
+          examples:
+            - "checkout.session.completed"
+        created:
+          type: integer
+          description: Unix timestamp of event creation
+          examples:
+            - 1704268800
+        data:
+          type: object
+          required:
+            - object
+          properties:
+            object:
+              type: object
+              description: |
+                The Stripe object that triggered the event.
+                Structure depends on event type.
+              additionalProperties: true
+
+    WebhookResponse:
+      type: object
+      required:
+        - received
+      properties:
+        received:
+          type: boolean
+          const: true
+          description: Acknowledgement that webhook was received
+        event_id:
+          type: string
+          description: Stripe event ID
+        event_type:
+          type: string
+          description: Type of event processed
+        processing_result:
+          type: string
+          enum:
+            - success
+            - duplicate
+            - skipped
+            - error
+          description: |
+            Result of processing:
+            - success: Event processed normally
+            - duplicate: Event already processed (idempotent)
+            - skipped: Event type not handled
+            - error: Processing failed (will be retried)
+        message:
+          type: string
+          description: Additional information about processing
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error_code
+        - message
+        - recovery
+      properties:
+        success:
+          type: boolean
+          const: false
+        error_code:
+          type: string
+        message:
+          type: string
+        recovery:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    # Internal model for webhook event logging
+    StripeWebhookEventLog:
+      type: object
+      description: |
+        Internal model for logging webhook events to DynamoDB.
+        Used for idempotency and auditing.
+      required:
+        - event_id
+        - event_type
+        - processed_at
+        - payload_hash
+      properties:
+        event_id:
+          type: string
+          description: Stripe event ID (PK)
+        event_type:
+          type: string
+          description: Event type for filtering
+        processed_at:
+          type: string
+          format: date-time
+          description: When event was processed
+        payload_hash:
+          type: string
+          description: SHA-256 hash for deduplication
+        reservation_id:
+          type: string
+          description: Associated reservation (from metadata)
+        payment_id:
+          type: string
+          description: Associated payment ID
+        processing_result:
+          type: string
+          enum:
+            - success
+            - duplicate
+            - error
+        error_message:
+          type: string
+          description: Error details if processing failed
+        ttl:
+          type: integer
+          description: DynamoDB TTL (90 days)
