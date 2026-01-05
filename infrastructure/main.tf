@@ -446,6 +446,9 @@ module "cognito" {
   user_pool_tier             = var.cognito_user_pool_tier
   enable_user_auth_email_otp = var.enable_cognito_email_otp
 
+  # Enable password auth for E2E test automation (allows test users to bypass OTP)
+  enable_user_password_auth = var.enable_cognito_password_auth
+
   # SES email configuration (optional)
   # When set, Cognito uses your SES identity instead of default email service
   ses_email_identity = var.ses_email_identity

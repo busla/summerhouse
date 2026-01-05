@@ -28,9 +28,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import boto3  # noqa: E402
+from botocore.exceptions import ClientError  # noqa: E402
 
 # Global region setting (set by main() from args)
 _AWS_REGION: str | None = None
+
+# Cognito User Pool ID (matches frontend E2E tests)
+COGNITO_USER_POOL_ID = "eu-west-1_VEgg3Z7oI"
+
+# E2E test user email (must match SSM param /booking/e2e/test-user-email)
+E2E_TEST_USER_EMAIL = "e2e-test@levy.apro.work"
 
 
 def get_dynamodb_resource():
@@ -43,6 +50,39 @@ def get_dynamodb_resource():
 def get_table_name(env: str, table: str) -> str:
     """Get full table name with environment prefix."""
     return f"booking-{env}-{table}"
+
+
+def get_cognito_user_sub(email: str) -> str | None:
+    """Get a Cognito user's sub (unique ID) by email.
+
+    This is used to link seeded customer records to their Cognito identity,
+    enabling the fast lookup path via cognito-sub-index GSI.
+
+    Args:
+        email: The user's email address (Cognito username)
+
+    Returns:
+        The user's sub (UUID) if found, None otherwise
+    """
+    try:
+        client = boto3.client("cognito-idp", region_name=_AWS_REGION)
+        response = client.admin_get_user(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+        )
+        # Find the 'sub' attribute
+        for attr in response.get("UserAttributes", []):
+            if attr.get("Name") == "sub":
+                return attr.get("Value")
+        return None
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code")
+        if error_code == "UserNotFoundException":
+            print(f"  ⚠️  Cognito user not found: {email}")
+            print("      Run 'yarn test:e2e:setup-user' first to create the user")
+        else:
+            print(f"  ⚠️  Could not get Cognito user {email}: {e}")
+        return None
 
 
 def create_seasonal_pricing(env: str) -> list[dict]:
@@ -209,26 +249,17 @@ def create_availability(env: str, years: int = 2) -> int:
     end_date = today + timedelta(days=365 * years)
 
     # Sample blocked periods (existing bookings) for realistic test data
+    # IMPORTANT: E2E tests book June 16-30, 2026. These blocked periods must NOT overlap.
+    # Using relative dates from today for variety in dev environment.
     blocked_periods = [
-        # Week blocked in 2 weeks
-        (today + timedelta(days=14), today + timedelta(days=20), "RES-2025-TEST001"),
-        # Long weekend blocked in 1 month
-        (today + timedelta(days=30), today + timedelta(days=33), "RES-2025-TEST002"),
-        # Two weeks in summer (July 15-28, 2025)
-        (date(2025, 7, 15), date(2025, 7, 28), "RES-2025-TEST003"),
-        # First week of every month in 2026 (for testing unavailable dates in calendar)
-        (date(2026, 1, 1), date(2026, 1, 8), "RES-2026-JAN01"),
-        (date(2026, 2, 1), date(2026, 2, 8), "RES-2026-FEB01"),
-        (date(2026, 3, 1), date(2026, 3, 8), "RES-2026-MAR01"),
-        (date(2026, 4, 1), date(2026, 4, 8), "RES-2026-APR01"),
-        (date(2026, 5, 1), date(2026, 5, 8), "RES-2026-MAY01"),
-        (date(2026, 6, 1), date(2026, 6, 8), "RES-2026-JUN01"),
-        (date(2026, 7, 1), date(2026, 7, 8), "RES-2026-JUL01"),
-        (date(2026, 8, 1), date(2026, 8, 8), "RES-2026-AUG01"),
-        (date(2026, 9, 1), date(2026, 9, 8), "RES-2026-SEP01"),
-        (date(2026, 10, 1), date(2026, 10, 8), "RES-2026-OCT01"),
-        (date(2026, 11, 1), date(2026, 11, 8), "RES-2026-NOV01"),
-        (date(2026, 12, 1), date(2026, 12, 8), "RES-2026-DEC01"),
+        # Week blocked soon (days 14-20) - before E2E test range
+        (today + timedelta(days=14), today + timedelta(days=20), "RES-TEST-SOON"),
+        # Long weekend blocked later (days 75-78) - after E2E test range
+        (today + timedelta(days=75), today + timedelta(days=78), "RES-TEST-LATER"),
+        # Week blocked in ~4 months (days 120-127) - well after E2E test range
+        (today + timedelta(days=120), today + timedelta(days=127), "RES-TEST-FAR"),
+        # Another blocked period at ~6 months (days 180-187)
+        (today + timedelta(days=180), today + timedelta(days=187), "RES-TEST-SUMMER"),
     ]
 
     # Build set of blocked dates for quick lookup
@@ -282,6 +313,7 @@ def create_sample_customers(env: str) -> list[dict]:
     Schema matches customer.py tool requirements:
     - customer_id (PK)
     - email (with email-index GSI)
+    - cognito_sub (with cognito-sub-index GSI) - links to Cognito identity
     - email_verified, name, phone, preferred_language
     - first_verified_at, total_bookings, created_at, updated_at
     """
@@ -290,7 +322,32 @@ def create_sample_customers(env: str) -> list[dict]:
 
     now = datetime.now(timezone.utc).isoformat()
 
+    # Get the E2E test user's cognito_sub if they exist in Cognito
+    # This enables the fast lookup path in the API
+    e2e_cognito_sub = get_cognito_user_sub(E2E_TEST_USER_EMAIL)
+
+    # Build E2E test user customer record
+    e2e_customer: dict = {
+        "customer_id": str(uuid.uuid4()),
+        "email": E2E_TEST_USER_EMAIL,
+        "name": "Automated Test User",
+        "phone": "+34 600 123 456",
+        "email_verified": True,
+        "preferred_language": "en",
+        "total_bookings": 0,
+        "first_verified_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # Add cognito_sub if available (enables fast path lookup)
+    if e2e_cognito_sub:
+        e2e_customer["cognito_sub"] = e2e_cognito_sub
+        print(f"  ℹ️  E2E user cognito_sub: {e2e_cognito_sub[:8]}...")
+
     customers = [
+        # E2E Test User - linked to Cognito user created by setup-test-user.ts
+        e2e_customer,
         {
             "customer_id": str(uuid.uuid4()),
             "email": "john.smith@example.com",

@@ -184,11 +184,14 @@ resource "aws_cognito_user_pool_client" "main" {
   user_pool_id = aws_cognito_user_pool.main.id
 
   # Auth flows - USER_AUTH enables native EMAIL_OTP
-  # ALLOW_ADMIN_USER_PASSWORD_AUTH for backend admin_create_user
-  explicit_auth_flows = [
-    "ALLOW_USER_AUTH",
-    "ALLOW_REFRESH_TOKEN_AUTH",
-  ]
+  # ALLOW_USER_PASSWORD_AUTH optionally enabled for E2E test automation
+  explicit_auth_flows = concat(
+    [
+      "ALLOW_USER_AUTH",
+      "ALLOW_REFRESH_TOKEN_AUTH",
+    ],
+    var.enable_user_password_auth ? ["ALLOW_USER_PASSWORD_AUTH"] : []
+  )
 
   # Token validity
   access_token_validity  = 1  # hours

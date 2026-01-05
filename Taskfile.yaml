@@ -212,7 +212,7 @@ tasks:
     env:
       AWS_DEFAULT_REGION: "{{.REGION}}"
     cmds:
-      - uv run python scripts/seed_data.py --env {{.ENV}} --region {{.REGION}}
+      - uv run python scripts/seed_data.py --env {{.ENV}} --region {{.REGION}} {{.CLI_ARGS}}
 
   # ============================================================================
   # Internal Tasks (reusable templates)

@@ -469,9 +469,11 @@ This project follows the Booking Constitution (v1.1.0):
 - Browser sessionStorage (form data), S3 (static files) (012-fix-routing-waf)
 - Python 3.13+ (backend only - no frontend changes required) + FastAPI, stripe (Python SDK), boto3 (SSM), Pydantic v2 (strict mode) (013-stripe-payment)
 - DynamoDB (`booking-{env}-payments` table with GSI for reservation lookups) (013-stripe-payment)
+- TypeScript 5.x (strict mode), Next.js 14+ (App Router, static export) + @hey-api/openapi-ts (generated client), shadcn/ui, Playwright (014-stripe-checkout-frontend)
+- sessionStorage (form state persistence during Stripe redirect), generated API client with checkout-session endpoint (014-stripe-checkout-frontend)
 
 ## Recent Changes
+- 014-stripe-checkout-frontend: Add payment step to booking flow; /booking/success and /booking/cancel routes; useCheckoutSession hook; Playwright E2E with mocked Stripe
+- 013-stripe-payment: Stripe Checkout integration backend; checkout-session API, payment status, retry logic
 - 008-rest-api-gateway: Migrate gateway-v2 module from HTTP API to REST API; Cognito User Pools authorizer, explicit OPTIONS methods for CORS, deployment triggers
 - 007-tools-api-endpoints: 21 REST endpoints exposing Strands agent tools; reuses shared/services layer; marker-based JWT auth for OpenAPI generation
-- 006-backend-workspace-openapi: Restructured backend into UV workspace (agent, api, shared); API Gateway provisioned via OpenAPI with JWT authorizer
-- 004-jwt-session-auth: Added JWT token delivery from backend to frontend, TokenDeliveryEvent in tool responses, auth_token in transport payload
