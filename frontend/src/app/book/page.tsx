@@ -4,21 +4,21 @@
  * Book Page
  *
  * Multi-step booking flow for direct reservations.
- * Steps: Date selection → Price review → Guest details → Confirmation
+ * Steps: Date selection → Guest details → Payment (Stripe redirect) → Success
  *
  * Requirements: FR-011
- * Uses: BookingWidget (T015), GuestDetailsForm (T025), useCreateReservation (T030)
+ * Uses: BookingWidget (T015), GuestDetailsForm (T025), useCreateReservation (T030), PaymentStep
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Calendar, User, CheckCircle, AlertCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, User, CheckCircle, AlertCircle, CreditCard } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { DateRangePicker } from '@/components/booking/DateRangePicker'
 import { PriceBreakdown } from '@/components/booking/PriceBreakdown'
 import { GuestDetailsForm } from '@/components/booking/GuestDetailsForm'
-import { BookingConfirmation } from '@/components/booking/BookingConfirmation'
+import { PaymentStep } from '@/components/booking/PaymentStep'
 import { usePricing } from '@/hooks/usePricing'
 import { useAvailability } from '@/hooks/useAvailability'
 import { useCreateReservation } from '@/hooks/useCreateReservation'
@@ -29,36 +29,47 @@ import {
 } from '@/hooks/useFormPersistence'
 import type { DateRange as DayPickerRange } from 'react-day-picker'
 import type { GuestDetails } from '@/lib/schemas/booking-form.schema'
-import type { Reservation } from '@/lib/api-client'
 
 // Storage key for form persistence (T006)
 const STORAGE_KEY = 'booking-form-state'
 
-// Shape of persisted form state
+// Shape of persisted form state (enhanced for payment flow)
 interface BookingFormState {
   currentStep: BookingStep
   selectedRange: DayPickerRange | undefined
   guestDetails: GuestDetails | null
+  // Payment fields (survive Stripe redirect)
+  reservationId: string | null
+  paymentAttempts: number
+  lastPaymentError: string | null
+  stripeSessionId: string | null
 }
 
 const initialFormState: BookingFormState = {
   currentStep: 'dates',
   selectedRange: undefined,
   guestDetails: null,
+  // Payment initial state
+  reservationId: null,
+  paymentAttempts: 0,
+  lastPaymentError: null,
+  stripeSessionId: null,
 }
 
-// Step definition for the booking flow
-type BookingStep = 'dates' | 'guest' | 'confirmation'
+// Step definition for the booking flow (with payment step)
+type BookingStep = 'dates' | 'guest' | 'payment' | 'confirmation'
 
 const STEPS: { key: BookingStep; label: string; icon: React.ReactNode }[] = [
   { key: 'dates', label: 'Select Dates', icon: <Calendar size={18} /> },
   { key: 'guest', label: 'Guest Details', icon: <User size={18} /> },
+  { key: 'payment', label: 'Payment', icon: <CreditCard size={18} /> },
   { key: 'confirmation', label: 'Confirmation', icon: <CheckCircle size={18} /> },
 ]
 
 export default function BookPage() {
   // Persisted form state - survives browser refresh (T007)
-  const [formState, setFormState, clearFormState] = useFormPersistence<BookingFormState>({
+  // clearFormState not used here - success page handles clearing after payment
+  const [formState, setFormState] = useFormPersistence<BookingFormState>({
     key: STORAGE_KEY,
     initialValue: initialFormState,
     serialize: serializeWithDates,
@@ -68,8 +79,7 @@ export default function BookPage() {
   // Destructure for easier access
   const { currentStep, selectedRange, guestDetails } = formState
 
-  // Non-persisted state (reservation comes from API, error is transient)
-  const [reservation, setReservation] = useState<Reservation | null>(null)
+  // Non-persisted state (error is transient)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Helper to update specific form fields
@@ -108,6 +118,17 @@ export default function BookPage() {
     updateFormState({ currentStep: 'dates' })
   }, [updateFormState])
 
+  const handleBackToGuest = useCallback(() => {
+    updateFormState({ currentStep: 'guest' })
+  }, [updateFormState])
+
+  // Calculate number of nights for display
+  const nights = useMemo(() => {
+    if (!selectedRange?.from || !selectedRange?.to) return 0
+    const diff = selectedRange.to.getTime() - selectedRange.from.getTime()
+    return Math.ceil(diff / (1000 * 60 * 60 * 24))
+  }, [selectedRange])
+
   // Persist guest details as user types (real-time form persistence)
   const handleGuestDetailsChange = useCallback((values: Partial<GuestDetails>) => {
     // Only update if values have meaningful content to avoid unnecessary writes
@@ -125,7 +146,7 @@ export default function BookPage() {
     updateFormState({ guestDetails: data })
     setSubmitError(null)
 
-    // Create the reservation via API
+    // Create the reservation via API (status: pending_payment)
     const result = await createReservation({
       checkIn: selectedRange.from,
       checkOut: selectedRange.to,
@@ -140,12 +161,13 @@ export default function BookPage() {
     }
 
     if (result.reservation) {
-      setReservation(result.reservation)
-      updateFormState({ currentStep: 'confirmation' })
-      // Clear persisted form data after successful booking (T008)
-      clearFormState()
+      // Store reservation for payment step (survives Stripe redirect)
+      updateFormState({
+        currentStep: 'payment',
+        reservationId: result.reservation.reservation_id,
+      })
     }
-  }, [selectedRange, createReservation, updateFormState, clearFormState])
+  }, [selectedRange, createReservation, updateFormState])
 
   // Step indicator component
   const StepIndicator = () => (
@@ -317,7 +339,7 @@ export default function BookPage() {
                   Back
                 </Button>
                 <Button type="submit" size="lg" disabled={isSubmitting}>
-                  {isSubmitting ? 'Processing...' : 'Complete Booking'}
+                  {isSubmitting ? 'Creating Reservation...' : 'Continue to Payment'}
                   {!isSubmitting && <ArrowRight size={18} />}
                 </Button>
               </div>
@@ -326,15 +348,30 @@ export default function BookPage() {
         </Card>
       )}
 
-      {/* Step 3: Confirmation */}
-      {currentStep === 'confirmation' && reservation && guestDetails && (
-        <BookingConfirmation
-          reservation={reservation}
+      {/* Step 3: Payment */}
+      {currentStep === 'payment' && formState.reservationId && guestDetails && hasCompleteDates && (
+        <PaymentStep
+          reservationId={formState.reservationId}
+          totalAmount={pricing ? pricing.total * 100 : 0} // Convert EUR to cents
+          checkIn={selectedRange.from!}
+          checkOut={selectedRange.to!}
           guestName={guestDetails.name}
-          guestEmail={guestDetails.email}
-          guestPhone={guestDetails.phone}
+          nights={nights}
+          onBack={handleBackToGuest}
+          onPaymentInitiated={() => {
+            // Store session ID before redirect (optional, for correlation on return)
+            // The actual session ID will come from the API response
+          }}
+          onError={(error) => {
+            updateFormState({
+              lastPaymentError: error,
+              paymentAttempts: formState.paymentAttempts + 1,
+            })
+          }}
         />
       )}
+
+      {/* Note: Confirmation step is now handled by /booking/success after Stripe redirect */}
     </div>
   )
 }

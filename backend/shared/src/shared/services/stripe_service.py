@@ -168,7 +168,7 @@ class StripeService:
                     "cancel_url": cancel_url,
                     "metadata": session_metadata,
                     "customer_email": customer_email,
-                    "expires_after": 1800,  # 30 minutes
+                    "expires_at": int(datetime.now(timezone.utc).timestamp()) + 1800,  # 30 min from now
                 },
                 options={"idempotency_key": idempotency_key},
             )

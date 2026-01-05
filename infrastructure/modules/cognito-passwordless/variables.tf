@@ -136,3 +136,25 @@ variable "frontend_callback_urls" {
   type        = list(string)
   default     = []
 }
+
+# -----------------------------------------------------------------------------
+# Test Automation Support
+# -----------------------------------------------------------------------------
+
+variable "enable_user_password_auth" {
+  description = <<-EOT
+    Enable USER_PASSWORD_AUTH flow for test automation.
+
+    When enabled, adds ALLOW_USER_PASSWORD_AUTH to the app client's explicit_auth_flows.
+    This allows test users to authenticate with username/password via InitiateAuth
+    with AuthFlow=USER_PASSWORD_AUTH, bypassing the EMAIL_OTP flow.
+
+    Use case: E2E tests can create users with AdminSetUserPassword and authenticate
+    programmatically without needing to intercept OTP emails.
+
+    Note: This does NOT disable EMAIL_OTP - both auth methods work simultaneously.
+    Real users continue using EMAIL_OTP while test users can use passwords.
+  EOT
+  type        = bool
+  default     = false
+}

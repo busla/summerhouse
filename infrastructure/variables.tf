@@ -101,6 +101,19 @@ variable "enable_cognito_email_otp" {
   default     = false
 }
 
+variable "enable_cognito_password_auth" {
+  description = <<-EOT
+    Enable USER_PASSWORD_AUTH flow for E2E test automation.
+    When enabled, test users can authenticate with username/password via
+    InitiateAuth with AuthFlow=USER_PASSWORD_AUTH.
+
+    This allows E2E tests to run without intercepting EMAIL_OTP codes.
+    Real users continue using EMAIL_OTP; test users use passwords.
+  EOT
+  type        = bool
+  default     = false
+}
+
 # -----------------------------------------------------------------------------
 # SES Email Configuration for Cognito
 # -----------------------------------------------------------------------------

@@ -4,16 +4,18 @@
  * BookingConfirmation Component
  *
  * Displays successful booking confirmation with reservation details.
- * Shows booking summary, guest info, and next steps.
+ * Shows booking summary, guest info, payment status, and next steps.
  *
  * Requirements: FR-011 (booking confirmation display)
+ * @see specs/014-stripe-checkout-frontend/spec.md - FR-008 (Payment Status)
  */
 
 import Link from 'next/link'
-import { CheckCircle, Calendar, Users, Mail, Phone, Home } from 'lucide-react'
+import { CheckCircle, Calendar, Users, Mail, Phone, Home, CreditCard, Loader2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import type { Reservation } from '@/lib/api-client'
+import { PaymentStatusBadge } from '@/components/booking/PaymentStatusBadge'
+import type { Reservation, Payment } from '@/lib/api-client'
 
 // === Types ===
 
@@ -26,6 +28,10 @@ export interface BookingConfirmationProps {
   guestEmail: string
   /** Guest phone (from form, optional) */
   guestPhone?: string
+  /** Payment information (optional - for payment-enabled flows) */
+  payment?: Payment | null
+  /** Whether payment status is being fetched/polled */
+  isPaymentLoading?: boolean
 }
 
 // === Helper Functions ===
@@ -60,6 +66,8 @@ export function BookingConfirmation({
   guestName,
   guestEmail,
   guestPhone,
+  payment,
+  isPaymentLoading,
 }: BookingConfirmationProps) {
   return (
     <Card>
@@ -144,6 +152,41 @@ export function BookingConfirmation({
                 <span className="text-primary">{formatCurrency(reservation.total_amount)}</span>
               </div>
             </div>
+
+            {/* Payment Status */}
+            {(payment || isPaymentLoading) && (
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <CreditCard size={16} />
+                    <span>Payment</span>
+                  </div>
+                  {isPaymentLoading ? (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Loader2 size={14} className="animate-spin" />
+                      <span className="text-sm">Checking status...</span>
+                    </div>
+                  ) : payment ? (
+                    <PaymentStatusBadge status={payment.status} />
+                  ) : null}
+                </div>
+                {payment && payment.status === 'completed' && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Payment confirmed via {payment.provider}
+                  </p>
+                )}
+                {payment && payment.status === 'pending' && (
+                  <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                    Payment is being processed. This may take a few moments.
+                  </p>
+                )}
+                {payment && payment.status === 'failed' && (
+                  <p className="text-xs text-destructive mt-2">
+                    Payment failed. Please try again or contact support.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Special Requests */}
             {typeof reservation.special_requests === 'string' && reservation.special_requests && (

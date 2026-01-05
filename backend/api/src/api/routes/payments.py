@@ -83,14 +83,56 @@ def _convert_to_cents(amount: int | float) -> int:
 
 
 def _get_user_customer_id(request: Request) -> str | None:
-    """Extract customer_id from request based on JWT sub claim."""
+    """Extract customer_id from request based on JWT claims.
+
+    Supports two API Gateway configurations:
+    1. HTTP API with JWT authorizer: Claims mapped to x-user-sub header
+    2. REST API with Cognito User Pools: Claims in event.requestContext.authorizer.claims
+
+    We try to look up the customer by cognito_sub first, then fallback
+    to email lookup and auto-link the cognito_sub if found.
+
+    This handles the case where customers were created during email
+    verification (without cognito_sub) and later authenticate via
+    Cognito (which provides cognito_sub).
+    """
+    # Try header first (HTTP API with claim mapping)
     user_sub = request.headers.get("x-user-sub")
+
+    # Fallback: REST API with Cognito User Pools authorizer
+    # Claims are in event.requestContext.authorizer.claims (via Mangum)
+    event = request.scope.get("aws.event", {})
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+    if not user_sub:
+        user_sub = claims.get("sub")
+
     if not user_sub:
         return None
 
     db = get_dynamodb_service()
+
+    # First, try lookup by cognito_sub (fast path for returning users)
     customer = db.get_customer_by_cognito_sub(user_sub)
-    return customer.get("customer_id") if customer else None
+    if customer:
+        return customer.get("customer_id")
+
+    # Fallback: Get email from Cognito claims and lookup by email
+    # (claims already extracted above from Lambda event)
+    user_email = claims.get("email")
+
+    if not user_email:
+        return None
+
+    customer = db.get_customer_by_email(user_email)
+    if not customer:
+        return None
+
+    # Auto-link cognito_sub to customer for future fast lookups
+    customer_id = customer.get("customer_id")
+    if customer_id:
+        db.update_customer_cognito_sub(customer_id, user_sub)
+
+    return customer_id
 
 
 @router.post(

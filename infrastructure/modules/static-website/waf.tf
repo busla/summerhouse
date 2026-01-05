@@ -98,6 +98,36 @@ module "waf" {
   # Deny-by-default: block all requests that don't match allow rules
   default_action = "block"
 
+  # API path bypass rule - allows /api/* paths without IP whitelisting
+  # API Gateway has its own Cognito authorizer for authentication
+  byte_match_statement_rules = var.waf_allow_api_paths ? [
+    {
+      name     = "allow-api-paths"
+      action   = "allow"
+      priority = 0 # Highest priority - evaluated before IP whitelist
+
+      statement = {
+        positional_constraint = "STARTS_WITH"
+        search_string         = "/api/"
+        field_to_match = {
+          uri_path = {}
+        }
+        text_transformation = [
+          {
+            priority = 0
+            type     = "LOWERCASE"
+          }
+        ]
+      }
+
+      visibility_config = {
+        cloudwatch_metrics_enabled = true
+        sampled_requests_enabled   = true
+        metric_name                = "${module.waf_label.id}-allow-api-paths"
+      }
+    }
+  ] : []
+
   # IP allowlist rules - separate rules for IPv4 and IPv6
   # Both use "allow" action so matching either allows the request
   ip_set_reference_statement_rules = concat(
