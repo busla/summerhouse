@@ -93,3 +93,4 @@ yarn-error.log*
 .terraform
 .env.*
 tsconfig.tsbuildinfo
+playwright-report
