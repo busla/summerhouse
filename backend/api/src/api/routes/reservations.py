@@ -11,6 +11,8 @@ API Gateway validates the JWT and passes user identity via x-user-sub header.
 """
 
 import datetime as dt
+import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.status import (
@@ -36,21 +38,38 @@ from shared.models.reservation import Reservation, ReservationCreate
 from shared.services.booking import BookingService
 from shared.services.dynamodb import get_dynamodb_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["reservations"])
 
 
 def _get_user_customer_id(request: Request) -> str | None:
     """Extract customer_id from request based on JWT claims.
 
-    API Gateway validates JWT and passes sub via x-user-sub header.
-    We try to look up the customer by cognito_sub first, then fallback
-    to email lookup and auto-link the cognito_sub if found.
+    Supports two API Gateway configurations:
+    1. HTTP API with JWT authorizer: Claims mapped to x-user-sub header
+    2. REST API with Cognito User Pools: Claims in event.requestContext.authorizer.claims
+
+    Resolution order:
+    1. Look up customer by cognito_sub (fast path for returning users)
+    2. Fallback to email lookup and auto-link cognito_sub if found
+    3. Auto-create customer profile if authenticated but no profile exists
 
     This handles the case where customers were created during email
     verification (without cognito_sub) and later authenticate via
-    Cognito (which provides cognito_sub).
+    Cognito (which provides cognito_sub). It also handles first-time
+    users who sign up via Cognito but haven't created a profile yet.
     """
+    # Try header first (HTTP API with claim mapping)
     user_sub = request.headers.get("x-user-sub")
+
+    # Fallback: REST API with Cognito User Pools authorizer
+    # Claims are in event.requestContext.authorizer.claims (via Mangum)
+    event = request.scope.get("aws.event", {})
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+    if not user_sub:
+        user_sub = claims.get("sub")
+
     if not user_sub:
         return None
 
@@ -61,23 +80,41 @@ def _get_user_customer_id(request: Request) -> str | None:
     if customer:
         return customer.get("customer_id")
 
-    # Fallback: Get email from Cognito claims and lookup by email
-    # Mangum exposes the Lambda event via ASGI scope
-    event = request.scope.get("aws.event", {})
-    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+    # Get email from Cognito claims for fallback lookup and auto-creation
     user_email = claims.get("email")
 
     if not user_email:
         return None
 
+    # Fallback: Look up by email and auto-link cognito_sub
     customer = db.get_customer_by_email(user_email)
-    if not customer:
-        return None
+    if customer:
+        # Auto-link cognito_sub to customer for future fast lookups
+        customer_id = customer.get("customer_id")
+        if customer_id:
+            db.update_customer_cognito_sub(customer_id, user_sub)
+        return customer_id
 
-    # Auto-link cognito_sub to customer for future fast lookups
-    customer_id = customer.get("customer_id")
-    if customer_id:
-        db.update_customer_cognito_sub(customer_id, user_sub)
+    # Auto-create customer profile for authenticated users without one
+    # This handles first-time Cognito users who haven't created a profile
+    now = dt.datetime.now(dt.UTC).isoformat()
+    customer_id = str(uuid.uuid4())
+    customer_data = {
+        "customer_id": customer_id,
+        "email": user_email,
+        "cognito_sub": user_sub,
+        "name": claims.get("name", ""),
+        "email_verified": True,  # Cognito verified email to get here
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    try:
+        db.create_customer(customer_data)
+        logger.info("Auto-created customer profile for %s (cognito_sub: %s)", user_email, user_sub[:8])
+    except Exception as e:
+        logger.error("Failed to auto-create customer profile: %s", e)
+        return None
 
     return customer_id
 

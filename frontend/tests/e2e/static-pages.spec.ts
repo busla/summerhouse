@@ -125,7 +125,8 @@ test.describe('Static Page Navigation', () => {
 
     // Test the navigation links that exist in the default nav
     // Default nav has: Home, Gallery, Location, Book, Agent (not all static pages)
-    const navPaths = ['/', '/gallery', '/location', '/book', '/agent']
+    // Use trailing slashes to match Navigation.tsx hrefs (Next.js trailingSlash: true)
+    const navPaths = ['/', '/gallery/', '/location/', '/book/', '/agent/']
 
     for (const navPath of navPaths) {
       // Go to home first
@@ -166,8 +167,8 @@ test.describe('Static Page Navigation', () => {
     const mobileNav = page.locator('nav.fixed')
     await expect(mobileNav).toBeVisible()
 
-    // Click on Location link in the mobile nav
-    await mobileNav.locator('a[href="/location"]').click()
+    // Click on Location link in the mobile nav (trailing slash to match Navigation.tsx)
+    await mobileNav.locator('a[href="/location/"]').click()
 
     // Should navigate to Location page (handle trailing slash)
     await expect(page).toHaveURL(/\/location\/?/)
@@ -187,8 +188,8 @@ test.describe('Static Page Navigation', () => {
     const mobileNav = page.locator('nav.fixed')
     await expect(mobileNav).toBeVisible()
 
-    // Navigate to Book page via mobile nav
-    await mobileNav.locator('a[href="/book"]').click()
+    // Navigate to Book page via mobile nav (trailing slash to match Navigation.tsx)
+    await mobileNav.locator('a[href="/book/"]').click()
 
     // Wait for navigation (handle trailing slash)
     await expect(page).toHaveURL(/\/book\/?/)

@@ -130,7 +130,42 @@ async function loadCredentials(): Promise<void> {
 }
 
 /**
- * Check if we have a valid stored auth state
+ * Check if a JWT token is expired.
+ * JWTs have an `exp` claim with Unix timestamp of expiration.
+ * Returns true if expired or invalid.
+ */
+function isTokenExpired(token: string, bufferSeconds = 60): boolean {
+  try {
+    // JWT format: header.payload.signature
+    const parts = token.split('.')
+    if (parts.length !== 3) {
+      return true // Invalid JWT format
+    }
+
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
+    const exp = payload.exp
+
+    if (!exp || typeof exp !== 'number') {
+      return true // No expiration claim
+    }
+
+    // Check if token expires within bufferSeconds (default 60s buffer)
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const isExpired = exp <= nowSeconds + bufferSeconds
+
+    if (isExpired) {
+      const expDate = new Date(exp * 1000)
+      console.log(`   ⚠️  Token expired at: ${expDate.toISOString()}`)
+    }
+
+    return isExpired
+  } catch {
+    return true // Any parsing error = treat as expired
+  }
+}
+
+/**
+ * Check if we have a valid stored auth state with non-expired tokens
  */
 function hasStoredAuthState(): boolean {
   if (!fs.existsSync(AUTH_STATE_PATH)) {
@@ -147,9 +182,69 @@ function hasStoredAuthState(): boolean {
         item.name.includes('idToken')
       )
     )
-    return hasAmplifyTokens
+
+    if (!hasAmplifyTokens) {
+      return false
+    }
+
+    // Also check if tokens are expired
+    const tokens = extractTokensFromStoredState()
+    if (tokens && isTokenExpired(tokens.idToken)) {
+      console.log('📂 Stored auth state has expired tokens, will re-authenticate')
+      return false
+    }
+
+    return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Extract tokens from stored auth state file.
+ * Returns tokens that can be passed directly to addInitScript.
+ */
+function extractTokensFromStoredState(): { idToken: string; accessToken: string; username: string } | null {
+  if (!fs.existsSync(AUTH_STATE_PATH)) {
+    return null
+  }
+
+  try {
+    const state = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf-8'))
+    const keyPrefix = `CognitoIdentityServiceProvider.${COGNITO_CLIENT_ID}`
+
+    // Find the origin with our localStorage data
+    for (const origin of state.origins || []) {
+      const localStorage = origin.localStorage || []
+
+      // Find LastAuthUser
+      const lastAuthUserItem = localStorage.find(
+        (item: { name: string }) => item.name === `${keyPrefix}.LastAuthUser`
+      )
+      if (!lastAuthUserItem) continue
+
+      const username = lastAuthUserItem.value
+
+      // Find idToken and accessToken
+      const idTokenItem = localStorage.find(
+        (item: { name: string }) => item.name === `${keyPrefix}.${username}.idToken`
+      )
+      const accessTokenItem = localStorage.find(
+        (item: { name: string }) => item.name === `${keyPrefix}.${username}.accessToken`
+      )
+
+      if (idTokenItem) {
+        return {
+          idToken: idTokenItem.value,
+          accessToken: accessTokenItem?.value || '',
+          username,
+        }
+      }
+    }
+
+    return null
+  } catch {
+    return null
   }
 }
 
@@ -208,8 +303,15 @@ async function authenticateWithPassword(): Promise<{
 }
 
 /**
- * Inject Cognito tokens into browser localStorage in Amplify v6 format.
- * This mimics what Amplify does when a user authenticates.
+ * Inject Cognito tokens into browser for E2E testing.
+ *
+ * Uses two mechanisms:
+ * 1. window.__MOCK_AUTH__ - Bypasses Amplify fetchAuthSession() entirely
+ *    (This is the primary mechanism used by ensureValidIdToken() in auth.ts)
+ * 2. localStorage - For Amplify's internal storage (backup)
+ *
+ * The mock mechanism is more reliable because it doesn't depend on
+ * Amplify v6 storage format compatibility.
  */
 async function injectAmplifyTokens(
   page: Page,
@@ -220,19 +322,35 @@ async function injectAmplifyTokens(
     username: string
   }
 ): Promise<void> {
-  // Amplify v6 localStorage key format:
-  // CognitoIdentityServiceProvider.{clientId}.{username}.{tokenType}
-  const keyPrefix = `CognitoIdentityServiceProvider.${COGNITO_CLIENT_ID}`
-
   // Parse idToken to get the 'sub' (Cognito user ID)
   const idTokenPayload = JSON.parse(
     Buffer.from(tokens.idToken.split('.')[1], 'base64').toString()
   )
   const cognitoUsername = idTokenPayload.sub || tokens.username
 
+  // Amplify v6 localStorage key format (for backup)
+  const keyPrefix = `CognitoIdentityServiceProvider.${COGNITO_CLIENT_ID}`
+
   await page.evaluate(
     ({ keyPrefix, cognitoUsername, tokens }) => {
-      // Set the tokens in localStorage as Amplify expects
+      // PRIMARY: Set window.__MOCK_AUTH__ for ensureValidIdToken() to use
+      // This bypasses Amplify's fetchAuthSession() entirely
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__MOCK_AUTH__ = {
+        tokens: {
+          idToken: {
+            toString: () => tokens.idToken,
+          },
+          accessToken: {
+            toString: () => tokens.accessToken,
+          },
+        },
+        user: {
+          username: cognitoUsername,
+        },
+      }
+
+      // BACKUP: Also set localStorage for Amplify (if needed elsewhere)
       localStorage.setItem(`${keyPrefix}.${cognitoUsername}.idToken`, tokens.idToken)
       localStorage.setItem(`${keyPrefix}.${cognitoUsername}.accessToken`, tokens.accessToken)
       localStorage.setItem(`${keyPrefix}.${cognitoUsername}.refreshToken`, tokens.refreshToken)
@@ -242,7 +360,7 @@ async function injectAmplifyTokens(
     { keyPrefix, cognitoUsername, tokens }
   )
 
-  console.log('💉 Tokens injected into browser localStorage')
+  console.log('💉 Tokens injected (window.__MOCK_AUTH__ + localStorage)')
 }
 
 /**
@@ -351,32 +469,74 @@ export const test = base.extend<AuthFixtures>({
     let context: BrowserContext
 
     // Try to reuse stored state first
-    if (hasStoredAuthState()) {
+    const storedTokens = extractTokensFromStoredState()
+    if (hasStoredAuthState() && storedTokens) {
       console.log('📂 Using stored auth state')
+      console.log(`   Token username: ${storedTokens.username}`)
       context = await browser.newContext({
         storageState: AUTH_STATE_PATH,
         baseURL: LIVE_SITE_URL,
       })
+
+      // Add init script to set window.__MOCK_AUTH__ on every page load
+      // CRITICAL: Pass tokens directly instead of reading from localStorage
+      // because init scripts run before localStorage is fully populated
+      await context.addInitScript(
+        ({ idToken, accessToken, username }) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(window as any).__MOCK_AUTH__ = {
+            tokens: {
+              idToken: { toString: () => idToken },
+              accessToken: { toString: () => accessToken },
+            },
+            user: { username },
+          }
+        },
+        storedTokens
+      )
     } else if (TEST_USER_PASSWORD) {
       // CI mode: Use password authentication (no manual intervention)
       console.log('🔄 Using password authentication (CI mode)')
+
+      // First, authenticate via Cognito API to get tokens
+      const tokens = await authenticateWithPassword()
+
+      // Parse idToken to get the 'sub' (Cognito user ID)
+      const idTokenPayload = JSON.parse(
+        Buffer.from(tokens.idToken.split('.')[1], 'base64').toString()
+      )
+      const cognitoUsername = idTokenPayload.sub || tokens.username
+
+      // Create context with init script that has tokens embedded
       context = await browser.newContext({
         baseURL: LIVE_SITE_URL,
       })
 
+      // Add init script with tokens passed directly (not from localStorage)
+      // This ensures window.__MOCK_AUTH__ is set on every page load
+      await context.addInitScript(
+        ({ idToken, accessToken, username }) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(window as any).__MOCK_AUTH__ = {
+            tokens: {
+              idToken: { toString: () => idToken },
+              accessToken: { toString: () => accessToken },
+            },
+            user: { username },
+          }
+        },
+        { idToken: tokens.idToken, accessToken: tokens.accessToken, username: cognitoUsername }
+      )
+
+      // Now create a page, inject localStorage, and save state
       const page = await context.newPage()
-      // Navigate to site first so we can inject localStorage
       await page.goto(LIVE_SITE_URL)
       await page.waitForLoadState('domcontentloaded')
 
-      // Authenticate via Cognito API and inject tokens
-      const tokens = await authenticateWithPassword()
+      // Inject localStorage for Amplify (backup) and to persist to auth state file
       await injectAmplifyTokens(page, tokens)
 
-      // Reload to pick up the injected tokens
-      await page.reload()
-      await page.waitForLoadState('networkidle')
-
+      // Save auth state (includes localStorage which we can reuse later)
       await saveAuthState(context)
       await page.close()
     } else {

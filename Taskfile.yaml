@@ -145,6 +145,32 @@ tasks:
     cmds:
       - yarn lint
 
+  frontend:test:e2e:live:
+    desc: Run frontend live E2E tests (seeds DB with --e2e-mode for clean slate)
+    cmds:
+      - task: seed:dev
+        vars: { CLI_ARGS: "--e2e-mode" }
+      - task: _frontend:test:e2e:live
+
+  _frontend:test:e2e:live:
+    internal: true
+    dir: frontend
+    cmds:
+      - yarn test:e2e:live
+
+  frontend:test:e2e:live:payment:
+    desc: Run frontend live payment E2E tests (seeds DB with --e2e-mode for clean slate)
+    cmds:
+      - task: seed:dev
+        vars: { CLI_ARGS: "--e2e-mode" }
+      - task: _frontend:test:e2e:live:payment
+
+  _frontend:test:e2e:live:payment:
+    internal: true
+    dir: frontend
+    cmds:
+      - yarn test:e2e:live:payment
+
   # ============================================================================
   # Combined Commands
   # ============================================================================

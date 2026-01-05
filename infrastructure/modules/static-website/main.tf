@@ -249,17 +249,16 @@ module "cloudfront" {
     ]
   )
 
-  # Error pages: Serve proper error pages with correct status codes
+  # Error pages: Only handle 404, not 403
   # Note: With Next.js static export + trailingSlash, all routes are physical files
   # so we don't need SPA-style 404 → index.html fallback.
-  # S3 with OAC returns 403 for both missing files AND WAF blocks.
+  #
+  # IMPORTANT: Do NOT add custom_error_response for 403 because:
+  # 1. CloudFront's custom_error_response applies to ALL origins (including API Gateway)
+  # 2. API Gateway 403 responses (business logic errors) must return JSON, not HTML
+  # 3. WAF blocks return 403 but don't need a pretty error page (blocked users = blocked)
+  # 4. S3 OAC returns 403 for non-existent files, but we handle that via 404 error page
   custom_error_response = [
-    {
-      error_code            = 403
-      response_code         = 403
-      response_page_path    = "/403.html"
-      error_caching_min_ttl = 10
-    },
     {
       error_code            = 404
       response_code         = 404

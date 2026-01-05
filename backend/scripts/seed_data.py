@@ -12,9 +12,17 @@ Usage:
     python scripts/seed_data.py --env dev --pricing-only
     python scripts/seed_data.py --env dev --clear-first
     python scripts/seed_data.py --env dev --skip-customers
+    python scripts/seed_data.py --env dev --e2e-mode
 
 Or via Taskfile:
     task seed:dev
+    task seed:dev:e2e    # E2E mode: clear all reservations, all dates available
+
+E2E Mode (--e2e-mode):
+    For Playwright E2E tests that need to book arbitrary dates without conflicts.
+    - Clears the reservations table
+    - Makes ALL dates available (no blocked periods)
+    - Each test can book unique future dates without cleanup
 """
 
 import argparse
@@ -222,7 +230,7 @@ def create_seasonal_pricing(env: str) -> list[dict]:
     return seasons
 
 
-def create_availability(env: str, years: int = 2) -> int:
+def create_availability(env: str, years: int = 2, e2e_mode: bool = False) -> int:
     """Create availability records for the next N years.
 
     Per FR-003 and data-model.md, pre-populates availability table with
@@ -232,6 +240,7 @@ def create_availability(env: str, years: int = 2) -> int:
     Args:
         env: Target environment
         years: Number of years to seed (default: 2)
+        e2e_mode: If True, ALL dates are available (no blocked periods)
 
     Returns:
         Number of records created
@@ -243,32 +252,37 @@ def create_availability(env: str, years: int = 2) -> int:
 
     print(f"Seeding availability table: {table.name}")
     print(f"  Creating {years} years of availability records...")
+    if e2e_mode:
+        print("  ℹ️  E2E mode: ALL dates will be available (no blocked periods)")
 
     # Start from today
     today = date.today()
     end_date = today + timedelta(days=365 * years)
 
     # Sample blocked periods (existing bookings) for realistic test data
-    # IMPORTANT: E2E tests book June 16-30, 2026. These blocked periods must NOT overlap.
-    # Using relative dates from today for variety in dev environment.
-    blocked_periods = [
-        # Week blocked soon (days 14-20) - before E2E test range
-        (today + timedelta(days=14), today + timedelta(days=20), "RES-TEST-SOON"),
-        # Long weekend blocked later (days 75-78) - after E2E test range
-        (today + timedelta(days=75), today + timedelta(days=78), "RES-TEST-LATER"),
-        # Week blocked in ~4 months (days 120-127) - well after E2E test range
-        (today + timedelta(days=120), today + timedelta(days=127), "RES-TEST-FAR"),
-        # Another blocked period at ~6 months (days 180-187)
-        (today + timedelta(days=180), today + timedelta(days=187), "RES-TEST-SUMMER"),
-    ]
-
-    # Build set of blocked dates for quick lookup
+    # In E2E mode, skip these so tests can book any date without conflicts
     blocked_dates: dict[str, str] = {}  # date_str -> reservation_id
-    for start, end, res_id in blocked_periods:
-        current = start
-        while current < end:
-            blocked_dates[current.isoformat()] = res_id
-            current += timedelta(days=1)
+
+    if not e2e_mode:
+        # IMPORTANT: E2E tests book June 16-30, 2026. These blocked periods must NOT overlap.
+        # Using relative dates from today for variety in dev environment.
+        blocked_periods = [
+            # Week blocked soon (days 14-20) - before E2E test range
+            (today + timedelta(days=14), today + timedelta(days=20), "RES-TEST-SOON"),
+            # Long weekend blocked later (days 75-78) - after E2E test range
+            (today + timedelta(days=75), today + timedelta(days=78), "RES-TEST-LATER"),
+            # Week blocked in ~4 months (days 120-127) - well after E2E test range
+            (today + timedelta(days=120), today + timedelta(days=127), "RES-TEST-FAR"),
+            # Another blocked period at ~6 months (days 180-187)
+            (today + timedelta(days=180), today + timedelta(days=187), "RES-TEST-SUMMER"),
+        ]
+
+        # Build set of blocked dates for quick lookup
+        for start, end, res_id in blocked_periods:
+            current = start
+            while current < end:
+                blocked_dates[current.isoformat()] = res_id
+                current += timedelta(days=1)
 
     # Generate all dates and write in batches
     count = 0
@@ -278,7 +292,7 @@ def create_availability(env: str, years: int = 2) -> int:
         while current_date < end_date:
             date_str = current_date.isoformat()
 
-            # Check if date is blocked
+            # Check if date is blocked (only in non-E2E mode)
             if date_str in blocked_dates:
                 record = {
                     "date": date_str,
@@ -302,7 +316,8 @@ def create_availability(env: str, years: int = 2) -> int:
     available_count = count - booked_count
     print(f"  ✓ Created {count} availability records")
     print(f"    - {available_count} available dates")
-    print(f"    - {booked_count} booked dates (test reservations)")
+    if booked_count > 0:
+        print(f"    - {booked_count} booked dates (test reservations)")
 
     return count
 
@@ -462,6 +477,11 @@ def main() -> int:
         action="store_true",
         help="Skip seeding customer data",
     )
+    parser.add_argument(
+        "--e2e-mode",
+        action="store_true",
+        help="E2E test mode: clears reservations table and makes ALL dates available",
+    )
 
     args = parser.parse_args()
 
@@ -478,19 +498,21 @@ def main() -> int:
     print(f"\n🌱 Seeding {args.env} environment (region: {args.region})\n")
 
     # Optionally clear existing data
-    if args.clear_first:
+    if args.clear_first or args.e2e_mode:
         print("Clearing existing data...")
-        tables = (
-            ["data-pricing"]
-            if args.pricing_only
-            else ["data-pricing", "data-availability", "data-customers"]
-        )
+        if args.pricing_only:
+            tables = ["data-pricing"]
+        elif args.e2e_mode:
+            # E2E mode: also clear reservations to ensure ALL dates can be booked
+            tables = ["data-pricing", "data-availability", "data-customers", "data-reservations"]
+        else:
+            tables = ["data-pricing", "data-availability", "data-customers"]
         for table in tables:
             try:
                 count = clear_table(args.env, table)
-                print(f"  Cleared {count} items from {table}")
+                print(f"  ✓ Cleared {count} items from {table}")
             except Exception as e:
-                print(f"  Could not clear {table}: {e}")
+                print(f"  ⚠️  Could not clear {table}: {e}")
         print()
 
     # Seed pricing (always)
@@ -507,7 +529,7 @@ def main() -> int:
     # Seed availability (2 years of dates per FR-003)
     print()
     try:
-        create_availability(args.env, years=2)
+        create_availability(args.env, years=2, e2e_mode=args.e2e_mode)
     except Exception as e:
         print(f"  ❌ Failed to seed availability: {e}")
         # Non-fatal, continue

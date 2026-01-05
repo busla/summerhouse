@@ -537,7 +537,8 @@ module "static_website" {
   waf_whitelisted_ips = [
     { ip = "157.157.199.250/32", description = "Hlíð" },
     { ip = "2a01:6f01:b401:9100:351e:1d6b:b936:eb0a/128", description = "Kleppsvegur" },
-    { ip = "213.181.116.102/32", description = "Apró" }
+    { ip = "213.181.116.102/32", description = "Apró" },
+    { ip = "46.22.109.167/32", description = "Kaffi Laugalækur" }
   ]
 
   # API Gateway origin for /api/* routes (unified domain for frontend + API)

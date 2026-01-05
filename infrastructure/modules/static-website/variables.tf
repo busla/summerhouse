@@ -126,6 +126,12 @@ variable "waf_managed_rules" {
   default = []
 }
 
+variable "waf_allow_api_paths" {
+  description = "Allow requests to /api/* paths without IP whitelisting. API has its own Cognito authorizer."
+  type        = bool
+  default     = false
+}
+
 # -----------------------------------------------------------------------------
 # API Gateway Origin Variables
 # -----------------------------------------------------------------------------

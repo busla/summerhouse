@@ -46,11 +46,11 @@ def _get_header_case_insensitive(request: Request, header_name: str) -> str | No
 
 
 def _get_cognito_sub(request: Request) -> str:
-    """Extract cognito_sub from x-user-sub header injected by API Gateway.
+    """Extract cognito_sub from API Gateway request.
 
-    API Gateway validates the JWT token using Cognito authorizer and injects
-    the x-user-sub header with the cognito sub claim. This header is trusted
-    because it comes from API Gateway after successful JWT validation.
+    Supports two API Gateway configurations:
+    1. HTTP API with JWT authorizer: Claims mapped to x-user-sub header
+    2. REST API with Cognito User Pools: Claims in event.requestContext.authorizer.claims
 
     Args:
         request: FastAPI request object
@@ -59,47 +59,46 @@ def _get_cognito_sub(request: Request) -> str:
         The cognito sub (user identifier) from the validated JWT
 
     Raises:
-        HTTPException: 401 if x-user-sub header is missing or empty
+        HTTPException: 401 if cognito_sub cannot be extracted
 
     Usage:
         @router.get("/me")
         def get_profile(cognito_sub: str = Depends(_get_cognito_sub)):
             return {"user_id": cognito_sub}
     """
+    # Try header first (HTTP API with claim mapping)
     cognito_sub = _get_header_case_insensitive(request, "x-user-sub")
 
-    if cognito_sub is None:
-        logger.warning(
-            "auth_header_missing",
-            extra={"header": "x-user-sub", "path": request.url.path},
-        )
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required: missing x-user-sub header",
-        )
+    # Fallback: REST API with Cognito User Pools authorizer
+    # Claims are in event.requestContext.authorizer.claims (via Mangum)
+    if not cognito_sub:
+        event = request.scope.get("aws.event", {})
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+        cognito_sub = claims.get("sub")
 
     if not cognito_sub:
         logger.warning(
-            "auth_header_empty",
-            extra={"header": "x-user-sub", "path": request.url.path},
+            "auth_cognito_sub_missing",
+            extra={"path": request.url.path},
         )
         raise HTTPException(
             status_code=401,
-            detail="Authentication required: empty x-user-sub header",
+            detail="Authentication required: cognito_sub not found",
         )
 
     logger.debug(
-        "auth_header_extracted",
+        "auth_cognito_sub_extracted",
         extra={"cognito_sub": cognito_sub[:8] + "...", "path": request.url.path},
     )
     return cognito_sub
 
 
 def _get_user_email(request: Request) -> str:
-    """Extract email from x-user-email header injected by API Gateway.
+    """Extract email from API Gateway request.
 
-    API Gateway extracts the email claim from the validated JWT and injects
-    it as the x-user-email header.
+    Supports two API Gateway configurations:
+    1. HTTP API with JWT authorizer: Email mapped to x-user-email header
+    2. REST API with Cognito User Pools: Email in event.requestContext.authorizer.claims
 
     Args:
         request: FastAPI request object
@@ -108,24 +107,32 @@ def _get_user_email(request: Request) -> str:
         The user's email from the validated JWT
 
     Raises:
-        HTTPException: 400 if x-user-email header is missing or empty
+        HTTPException: 400 if email cannot be extracted
     """
+    # Try header first (HTTP API with claim mapping)
     email = _get_header_case_insensitive(request, "x-user-email")
+
+    # Fallback: REST API with Cognito User Pools authorizer
+    # Claims are in event.requestContext.authorizer.claims (via Mangum)
+    if not email:
+        event = request.scope.get("aws.event", {})
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+        email = claims.get("email")
 
     if not email:
         logger.warning(
-            "email_header_missing",
-            extra={"header": "x-user-email", "path": request.url.path},
+            "email_missing",
+            extra={"path": request.url.path},
         )
         raise HTTPException(
             status_code=400,
-            detail="Missing email: x-user-email header required",
+            detail="Missing email: could not extract from request",
         )
 
     # Log with masked email for privacy (show first 3 chars + domain)
     masked_email = email[:3] + "***" + email[email.find("@") :] if "@" in email else "***"
     logger.debug(
-        "email_header_extracted",
+        "email_extracted",
         extra={"email_masked": masked_email, "path": request.url.path},
     )
     return email

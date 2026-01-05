@@ -59,7 +59,7 @@ async function selectDate(page: typeof test.prototype, date: Date, allowFallback
   // Try to find and click the date button
   // The calendar may need to be navigated to the correct month
   let attempts = 0
-  const maxAttempts = 8 // Up to 8 months ahead
+  const maxAttempts = 24 // Up to 24 months ahead (matches 2-year seeded availability)
 
   while (attempts < maxAttempts) {
     const dayButton = page.locator(`button[data-day="${dateStr}"]`)
@@ -102,6 +102,9 @@ async function selectDate(page: typeof test.prototype, date: Date, allowFallback
   )
 }
 
+/** Counter for generating unique date ranges per test (per worker) */
+let testDateOffset = 0
+
 /**
  * Complete the booking form up to the payment step
  */
@@ -113,12 +116,34 @@ async function completeBookingFormUpToPayment(
     guestName?: string
     guestEmail?: string
     guestPhone?: string
+    /** Days from today to start booking (default: auto-incremented per test) */
+    startOffset?: number
+    /** Number of nights to book (default: 7) */
+    nights?: number
+    /** Playwright worker index for parallel test isolation */
+    workerIndex?: number
   } = {}
 ) {
-  // Fixed test dates - June 16-30, 2026 (14 nights)
-  // Using fixed dates ensures predictable behavior with seed data
-  const checkIn = options.checkIn ?? new Date('2026-06-16')
-  const checkOut = options.checkOut ?? new Date('2026-06-30')
+  // Dynamic dates: Use unique date ranges per test to avoid conflicts
+  // Base offset of 30 days ensures dates are in the future
+  // Each worker gets its own date range: worker 0 starts at day 30, worker 1 at day 130, etc.
+  // Within each worker, tests increment by nights + 7 buffer days
+  // IMPORTANT: Must stay within 2-year (730-day) seeded availability window
+  //
+  // Math: Serial blocks have up to 5 tests, each using 14 days (7 nights + 7 buffer)
+  // Max range per worker = 5 * 14 = 70 days, so workerOffset >= 100 prevents overlap
+  // With 6 workers: max day = 30 + 500 + 70 = 600, well within 730-day window
+  const nights = options.nights ?? 7
+  const baseOffset = 30
+  const workerIndex = options.workerIndex ?? 0
+  const workerOffset = workerIndex * 100 // 100 days between workers to prevent overlap (6 workers = 600 max)
+
+  // Calculate unique date range for this test invocation
+  const startOffset = options.startOffset ?? baseOffset + workerOffset + testDateOffset
+  testDateOffset += nights + 7 // Reserve nights + buffer for next test in this worker
+
+  const checkIn = options.checkIn ?? addDays(new Date(), startOffset)
+  const checkOut = options.checkOut ?? addDays(checkIn, nights)
   const guestName = options.guestName ?? 'Automated Test User'
   const guestEmail = options.guestEmail ?? process.env.E2E_TEST_USER_EMAIL ?? 'test@example.com'
   const guestPhone = options.guestPhone ?? '+34 600 123 456'
@@ -174,6 +199,55 @@ async function completeBookingFormUpToPayment(
   // Continue to payment - this triggers a reservation API call
   const continueButton = page.getByRole('button', { name: /continue to payment/i })
   await expect(continueButton).toBeEnabled({ timeout: 5000 })
+
+  // Set up network interception to capture API request and response for debugging
+  let apiResponse: { status: number; body: string } | null = null
+  let apiRequestHeaders: Record<string, string> | null = null
+
+  // Capture request headers
+  page.on('request', (request) => {
+    if (request.url().includes('/api/reservations') && request.method() === 'POST') {
+      apiRequestHeaders = request.headers()
+      console.log(`[DEBUG] Reservation API Request URL: ${request.url()}`)
+      console.log(`[DEBUG] Authorization Header: ${apiRequestHeaders['authorization'] || 'NOT SET'}`)
+      console.log(`[DEBUG] All Request Headers:`, JSON.stringify(apiRequestHeaders, null, 2))
+    }
+  })
+
+  // Capture response
+  page.on('response', async (response) => {
+    if (response.url().includes('/api/reservations') && response.request().method() === 'POST') {
+      try {
+        apiResponse = {
+          status: response.status(),
+          body: await response.text(),
+        }
+        console.log(`[DEBUG] Reservation API Response: ${response.status()}`)
+        console.log(`[DEBUG] Response Body: ${apiResponse.body.substring(0, 500)}`)
+      } catch {
+        console.log(`[DEBUG] Could not read response body`)
+      }
+    }
+  })
+
+  // Debug: Check if window.__MOCK_AUTH__ is set before making API call
+  const mockAuthState = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mockAuth = (window as any).__MOCK_AUTH__
+    if (!mockAuth) {
+      return { set: false, reason: 'window.__MOCK_AUTH__ is undefined' }
+    }
+    const idToken = mockAuth.tokens?.idToken?.toString?.()
+    return {
+      set: true,
+      hasTokens: !!mockAuth.tokens,
+      hasIdToken: !!idToken,
+      idTokenPreview: idToken ? `${idToken.substring(0, 50)}...` : 'NOT SET',
+      username: mockAuth.user?.username || 'NOT SET',
+    }
+  })
+  console.log('[DEBUG] Mock Auth State:', JSON.stringify(mockAuthState, null, 2))
+
   await continueButton.click()
 
   // Wait for loading state to appear and disappear (API call in progress)
@@ -201,7 +275,13 @@ async function completeBookingFormUpToPayment(
     } else {
       errorText = await errorMessage.textContent() || 'Unknown error'
     }
-    throw new Error(`Reservation creation failed: ${errorText}`)
+
+    // Include API request/response details if available
+    const authHeader = apiRequestHeaders?.['authorization'] || 'NOT SET'
+    const apiDetails = apiResponse
+      ? `\nAuth Header: ${authHeader.substring(0, 50)}...\nAPI Status: ${apiResponse.status}\nAPI Response: ${apiResponse.body.substring(0, 300)}`
+      : '\nAPI Response: Not captured'
+    throw new Error(`Reservation creation failed: ${errorText}${apiDetails}`)
   }
 
   // Verify we're on the payment step
@@ -229,8 +309,8 @@ test.describe('Live Payment Flow - Authenticated', () => {
 
   test('authenticated user can complete booking form to payment step', async ({
     authenticatedPage,
-  }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  }, testInfo) => {
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Should see the booking summary on payment step
     await expect(authenticatedPage.getByText('Booking Summary')).toBeVisible()
@@ -240,8 +320,38 @@ test.describe('Live Payment Flow - Authenticated', () => {
 
   test('clicking "Proceed to Payment" creates Stripe checkout session', async ({
     authenticatedPage,
-  }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  }, testInfo) => {
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
+
+    // Set up network interception for checkout session API
+    let checkoutApiResponse: { status: number; body: string } | null = null
+    authenticatedPage.on('request', (request) => {
+      if (request.url().includes('/api/payments/checkout-session') && request.method() === 'POST') {
+        console.log(`[DEBUG] Checkout Session API Request: ${request.url()}`)
+        console.log(`[DEBUG] Request Headers:`, JSON.stringify(request.headers(), null, 2))
+      }
+    })
+    authenticatedPage.on('response', async (response) => {
+      if (response.url().includes('/api/payments/checkout-session') && response.request().method() === 'POST') {
+        try {
+          checkoutApiResponse = {
+            status: response.status(),
+            body: await response.text(),
+          }
+          console.log(`[DEBUG] Checkout Session API Response: ${response.status()}`)
+          console.log(`[DEBUG] Response Body: ${checkoutApiResponse.body.substring(0, 500)}`)
+        } catch {
+          console.log(`[DEBUG] Could not read checkout session response body`)
+        }
+      }
+    })
+
+    // Capture console errors
+    authenticatedPage.on('console', (msg) => {
+      if (msg.type() === 'error') {
+        console.log(`[DEBUG] Browser Console Error: ${msg.text()}`)
+      }
+    })
 
     // Click the payment button
     const payButton = authenticatedPage.getByRole('button', { name: /proceed to payment/i })
@@ -253,6 +363,14 @@ test.describe('Live Payment Flow - Authenticated', () => {
       authenticatedPage.getByText(/creating session|redirecting/i)
     ).toBeVisible({ timeout: 5000 })
 
+    // Wait a bit for API call to complete and log any captured data
+    await authenticatedPage.waitForTimeout(3000)
+    if (checkoutApiResponse) {
+      console.log(`[DEBUG] Final checkout API status: ${checkoutApiResponse.status}`)
+    } else {
+      console.log(`[DEBUG] WARNING: No checkout session API call was captured!`)
+    }
+
     // Wait for navigation to Stripe Checkout
     // This is the real Stripe test checkout page
     await authenticatedPage.waitForURL(/checkout\.stripe\.com/, {
@@ -263,8 +381,8 @@ test.describe('Live Payment Flow - Authenticated', () => {
     expect(authenticatedPage.url()).toContain('checkout.stripe.com')
   })
 
-  test('can navigate back from payment step to guest details', async ({ authenticatedPage }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  test('can navigate back from payment step to guest details', async ({ authenticatedPage }, testInfo) => {
+    const { guestName } = await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Click back button
     await authenticatedPage.getByRole('button', { name: /back/i }).click()
@@ -272,26 +390,28 @@ test.describe('Live Payment Flow - Authenticated', () => {
     // Should be back on guest details
     await expect(authenticatedPage.getByText('Guest Details')).toBeVisible({ timeout: 5000 })
 
-    // Form data should be preserved
-    await expect(authenticatedPage.getByLabel(/name/i)).toHaveValue('Automated Test User')
+    // Form data should be preserved (use actual name from authenticated user)
+    await expect(authenticatedPage.getByLabel(/name/i)).toHaveValue(guestName)
   })
 
-  test('payment step displays correct booking summary', async ({ authenticatedPage }) => {
-    const { guestName, guestEmail } = await completeBookingFormUpToPayment(authenticatedPage)
+  test('payment step displays correct booking summary', async ({ authenticatedPage }, testInfo) => {
+    const { guestName, guestEmail } = await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Verify summary shows correct guest info
     await expect(authenticatedPage.getByText(guestName)).toBeVisible()
     await expect(authenticatedPage.getByText(guestEmail)).toBeVisible()
 
-    // Verify pricing is displayed
+    // Verify pricing is displayed (nights count depends on test's booking range)
     await expect(authenticatedPage.getByText(/€/)).toBeVisible()
-    await expect(authenticatedPage.getByText(/14 nights/i)).toBeVisible()
+    await expect(authenticatedPage.getByText(/\d+ nights?/i)).toBeVisible()
   })
 })
 
 test.describe('Live Payment Flow - Session Persistence', () => {
-  test('booking state survives page reload', async ({ authenticatedPage }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  test.describe.configure({ mode: 'serial' }) // Run tests serially to avoid date conflicts
+
+  test('booking state survives page reload', async ({ authenticatedPage }, testInfo) => {
+    const { guestName } = await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Reload the page
     await authenticatedPage.reload()
@@ -299,11 +419,11 @@ test.describe('Live Payment Flow - Session Persistence', () => {
 
     // Should still be on payment step with data preserved
     await expect(authenticatedPage.getByText('Complete Payment')).toBeVisible({ timeout: 10000 })
-    await expect(authenticatedPage.getByText('Automated Test User')).toBeVisible()
+    await expect(authenticatedPage.getByText(guestName)).toBeVisible()
   })
 
-  test('can start fresh booking after clearing session', async ({ authenticatedPage }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  test('can start fresh booking after clearing session', async ({ authenticatedPage }, testInfo) => {
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Clear session storage
     await authenticatedPage.evaluate(() => {
@@ -322,8 +442,10 @@ test.describe('Live Payment Flow - Session Persistence', () => {
 })
 
 test.describe('Live Payment Flow - Stripe Checkout Navigation', () => {
-  test('Stripe checkout page loads correctly', async ({ authenticatedPage }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  test.describe.configure({ mode: 'serial' }) // Run tests serially to avoid date conflicts
+
+  test('Stripe checkout page loads correctly', async ({ authenticatedPage }, testInfo) => {
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Click payment button
     await authenticatedPage.getByRole('button', { name: /proceed to payment/i }).click()
@@ -337,11 +459,11 @@ test.describe('Live Payment Flow - Stripe Checkout Navigation', () => {
     await expect(authenticatedPage.locator('body')).toBeVisible()
   })
 
-  test.skip('completing Stripe checkout redirects to success page', async ({ authenticatedPage }) => {
+  test.skip('completing Stripe checkout redirects to success page', async ({ authenticatedPage }, testInfo) => {
     // This test requires completing Stripe checkout with test card
     // Skipped by default as it requires manual/special handling
 
-    await completeBookingFormUpToPayment(authenticatedPage)
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
     await authenticatedPage.getByRole('button', { name: /proceed to payment/i }).click()
 
     await authenticatedPage.waitForURL(/checkout\.stripe\.com/, { timeout: 30000 })
@@ -356,8 +478,8 @@ test.describe('Live Payment Flow - Stripe Checkout Navigation', () => {
     await expect(authenticatedPage.getByText(/booking confirmed/i)).toBeVisible()
   })
 
-  test('cancelling Stripe checkout redirects to cancel page', async ({ authenticatedPage }) => {
-    await completeBookingFormUpToPayment(authenticatedPage)
+  test('cancelling Stripe checkout redirects to cancel page', async ({ authenticatedPage }, testInfo) => {
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
     await authenticatedPage.getByRole('button', { name: /proceed to payment/i }).click()
 
     // Wait for Stripe checkout to load
@@ -384,6 +506,8 @@ test.describe('Live Payment Flow - Stripe Checkout Navigation', () => {
 })
 
 test.describe('Live Payment Flow - Error Scenarios', () => {
+  test.describe.configure({ mode: 'serial' }) // Run tests serially to avoid date conflicts
+
   test('handles API errors gracefully', async ({ authenticatedPage }) => {
     // Navigate to booking page but interrupt API calls
     await authenticatedPage.route('**/api/reservations', async (route) => {
@@ -396,8 +520,9 @@ test.describe('Live Payment Flow - Error Scenarios', () => {
 
     await authenticatedPage.goto('/book')
 
-    // Complete the form
-    const checkIn = addDays(new Date(), 30)
+    // Complete the form - use large offset (600+ days) to avoid conflicts with main tests
+    // Error tests don't actually hit the API (mocked), but need selectable calendar dates
+    const checkIn = addDays(new Date(), 650)
     const checkOut = addDays(checkIn, 5)
 
     await expect(authenticatedPage.locator('[data-slot="calendar"]').first()).toBeVisible({
