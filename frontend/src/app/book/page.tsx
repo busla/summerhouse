@@ -10,34 +10,50 @@
  * Uses: BookingWidget (T015), GuestDetailsForm (T025), useCreateReservation (T030), PaymentStep
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Calendar, User, CheckCircle, AlertCircle, CreditCard } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, User, CheckCircle, AlertCircle, CreditCard, Shield } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { DateRangePicker } from '@/components/booking/DateRangePicker'
 import { PriceBreakdown } from '@/components/booking/PriceBreakdown'
+import { AuthStep } from '@/components/booking/AuthStep'
 import { GuestDetailsForm } from '@/components/booking/GuestDetailsForm'
 import { PaymentStep } from '@/components/booking/PaymentStep'
 import { usePricing } from '@/hooks/usePricing'
 import { useAvailability } from '@/hooks/useAvailability'
 import { useCreateReservation } from '@/hooks/useCreateReservation'
+import { useAuthenticatedUser } from '@/hooks/useAuthenticatedUser'
+import { useCustomerProfile } from '@/hooks/useCustomerProfile'
 import {
   useFormPersistence,
   serializeWithDates,
   deserializeWithDates,
 } from '@/hooks/useFormPersistence'
 import type { DateRange as DayPickerRange } from 'react-day-picker'
-import type { GuestDetails } from '@/lib/schemas/booking-form.schema'
+import type { GuestDetails, SimplifiedGuestDetails } from '@/lib/schemas/booking-form.schema'
+import type { AuthStep as AuthStepType } from '@/hooks/useAuthenticatedUser'
 
 // Storage key for form persistence (T006)
 const STORAGE_KEY = 'booking-form-state'
 
-// Shape of persisted form state (enhanced for payment flow)
+// Step definition for the booking flow (with auth step per FR-002)
+type BookingStep = 'dates' | 'auth' | 'guest' | 'payment' | 'confirmation'
+
+// Shape of persisted form state (enhanced with auth fields per T007)
 interface BookingFormState {
   currentStep: BookingStep
   selectedRange: DayPickerRange | undefined
-  guestDetails: GuestDetails | null
+  // Auth step fields (persisted per FR-015)
+  customerName: string
+  customerEmail: string
+  customerPhone: string
+  authStep: AuthStepType
+  customerId: string | null
+  // Simplified guest step (only count + requests after auth step per FR-018)
+  guestDetails: SimplifiedGuestDetails | null
+  // Legacy: full guest details for backward compatibility during migration
+  legacyGuestDetails?: GuestDetails | null
   // Payment fields (survive Stripe redirect)
   reservationId: string | null
   paymentAttempts: number
@@ -48,6 +64,13 @@ interface BookingFormState {
 const initialFormState: BookingFormState = {
   currentStep: 'dates',
   selectedRange: undefined,
+  // Auth step initial state
+  customerName: '',
+  customerEmail: '',
+  customerPhone: '',
+  authStep: 'anonymous',
+  customerId: null,
+  // Guest step initial state
   guestDetails: null,
   // Payment initial state
   reservationId: null,
@@ -56,14 +79,13 @@ const initialFormState: BookingFormState = {
   stripeSessionId: null,
 }
 
-// Step definition for the booking flow (with payment step)
-type BookingStep = 'dates' | 'guest' | 'payment' | 'confirmation'
-
+// Step indicator config (4 steps per FR-002: Dates > Verify Identity > Guest Details > Payment)
 const STEPS: { key: BookingStep; label: string; icon: React.ReactNode }[] = [
   { key: 'dates', label: 'Select Dates', icon: <Calendar size={18} /> },
+  { key: 'auth', label: 'Verify Identity', icon: <Shield size={18} /> },
   { key: 'guest', label: 'Guest Details', icon: <User size={18} /> },
   { key: 'payment', label: 'Payment', icon: <CreditCard size={18} /> },
-  { key: 'confirmation', label: 'Confirmation', icon: <CheckCircle size={18} /> },
+  // Note: confirmation step handled by /booking/success page
 ]
 
 export default function BookPage() {
@@ -102,20 +124,70 @@ export default function BookPage() {
   // Reservation creation mutation
   const { createReservation, isLoading: isSubmitting } = useCreateReservation()
 
+  // Auth state for authenticated bypass (T030-T035)
+  const { step: authStep, user } = useAuthenticatedUser()
+  const { fetchCustomerProfile } = useCustomerProfile()
+  const authCheckDoneRef = useRef(false)
+
+  // Check if user is already authenticated on mount (US3 - Authenticated bypass)
+  // If so, fetch their profile and pre-fill customerId to allow skipping auth step
+  useEffect(() => {
+    if (authCheckDoneRef.current) return
+    if (authStep !== 'authenticated' || !user) return
+
+    authCheckDoneRef.current = true
+
+    const checkExistingCustomer = async () => {
+      const result = await fetchCustomerProfile()
+      if (result.customer) {
+        // Pre-fill customerId so auth step can be skipped
+        updateFormState({
+          customerId: result.customer.customer_id,
+          customerName: result.customer.name || formState.customerName,
+          customerEmail: result.customer.email || formState.customerEmail,
+          customerPhone: result.customer.phone || formState.customerPhone,
+          authStep: 'authenticated',
+        })
+      }
+    }
+
+    checkExistingCustomer()
+  }, [authStep, user, fetchCustomerProfile, updateFormState, formState.customerName, formState.customerEmail, formState.customerPhone])
+
   const hasCompleteDates = selectedRange?.from && selectedRange?.to
+  const isAlreadyAuthenticated = authStep === 'authenticated' && formState.customerId !== null
 
   const handleDatesChange = useCallback((range: DayPickerRange | undefined) => {
     updateFormState({ selectedRange: range })
   }, [updateFormState])
 
-  const handleContinueToGuest = useCallback(() => {
+  // Navigation: Dates → Auth (or skip to Guest if already authenticated per FR-014)
+  const handleContinueToAuth = useCallback(() => {
     if (hasCompleteDates) {
-      updateFormState({ currentStep: 'guest' })
+      // US3: Skip auth step if user is already authenticated with a customer profile
+      if (isAlreadyAuthenticated) {
+        updateFormState({ currentStep: 'guest' })
+      } else {
+        updateFormState({ currentStep: 'auth' })
+      }
     }
-  }, [hasCompleteDates, updateFormState])
+  }, [hasCompleteDates, isAlreadyAuthenticated, updateFormState])
 
   const handleBackToDates = useCallback(() => {
     updateFormState({ currentStep: 'dates' })
+  }, [updateFormState])
+
+  // Navigation: Auth → Guest (called after successful authentication)
+  const handleAuthComplete = useCallback((customerId: string) => {
+    updateFormState({
+      currentStep: 'guest',
+      customerId,
+      authStep: 'authenticated',
+    })
+  }, [updateFormState])
+
+  const handleBackToAuth = useCallback(() => {
+    updateFormState({ currentStep: 'auth' })
   }, [updateFormState])
 
   const handleBackToGuest = useCallback(() => {
@@ -129,17 +201,34 @@ export default function BookPage() {
     return Math.ceil(diff / (1000 * 60 * 60 * 24))
   }, [selectedRange])
 
-  // Persist guest details as user types (real-time form persistence)
-  const handleGuestDetailsChange = useCallback((values: Partial<GuestDetails>) => {
-    // Only update if values have meaningful content to avoid unnecessary writes
-    if (values.name || values.email || values.phone || values.guestCount || values.specialRequests) {
-      updateFormState({ guestDetails: values as GuestDetails })
-    }
+  // Persist auth step form values as user types (T025)
+  const handleAuthFormChange = useCallback((values: { name?: string; email?: string; phone?: string }) => {
+    if (values.name !== undefined) updateFormState({ customerName: values.name })
+    if (values.email !== undefined) updateFormState({ customerEmail: values.email })
+    if (values.phone !== undefined) updateFormState({ customerPhone: values.phone })
   }, [updateFormState])
 
-  const handleGuestSubmit = useCallback(async (data: GuestDetails) => {
+  // Persist guest details as user types (real-time form persistence)
+  // Simplified: only guestCount and specialRequests after auth step (FR-018)
+  const handleGuestDetailsChange = useCallback((values: Partial<SimplifiedGuestDetails>) => {
+    if (values.guestCount !== undefined || values.specialRequests !== undefined) {
+      updateFormState({
+        guestDetails: {
+          guestCount: values.guestCount ?? formState.guestDetails?.guestCount ?? 1,
+          specialRequests: values.specialRequests ?? formState.guestDetails?.specialRequests,
+        },
+      })
+    }
+  }, [updateFormState, formState.guestDetails])
+
+  const handleGuestSubmit = useCallback(async (data: SimplifiedGuestDetails) => {
     if (!selectedRange?.from || !selectedRange?.to) {
       setSubmitError('Please select dates first')
+      return
+    }
+
+    if (!formState.customerId) {
+      setSubmitError('Please complete identity verification first')
       return
     }
 
@@ -147,6 +236,7 @@ export default function BookPage() {
     setSubmitError(null)
 
     // Create the reservation via API (status: pending_payment)
+    // Customer is already authenticated, so reservation is linked via JWT
     const result = await createReservation({
       checkIn: selectedRange.from,
       checkOut: selectedRange.to,
@@ -167,7 +257,7 @@ export default function BookPage() {
         reservationId: result.reservation.reservation_id,
       })
     }
-  }, [selectedRange, createReservation, updateFormState])
+  }, [selectedRange, createReservation, updateFormState, formState.customerId])
 
   // Step indicator component
   const StepIndicator = () => (
@@ -254,9 +344,9 @@ export default function BookPage() {
               <Button
                 size="lg"
                 disabled={!hasCompleteDates}
-                onClick={handleContinueToGuest}
+                onClick={handleContinueToAuth}
               >
-                Continue to Guest Details
+                Continue
                 <ArrowRight size={18} />
               </Button>
             </div>
@@ -264,7 +354,21 @@ export default function BookPage() {
         </Card>
       )}
 
-      {/* Step 2: Guest Details */}
+      {/* Step 2: Auth (Verify Identity) */}
+      {currentStep === 'auth' && (
+        <AuthStep
+          onComplete={handleAuthComplete}
+          onBack={handleBackToDates}
+          onChange={handleAuthFormChange}
+          defaultValues={{
+            name: formState.customerName,
+            email: formState.customerEmail,
+            phone: formState.customerPhone,
+          }}
+        />
+      )}
+
+      {/* Step 3: Guest Details */}
       {currentStep === 'guest' && (
         <Card>
           <CardHeader>
@@ -332,7 +436,7 @@ export default function BookPage() {
                   type="button"
                   variant="outline"
                   size="lg"
-                  onClick={handleBackToDates}
+                  onClick={handleBackToAuth}
                   disabled={isSubmitting}
                 >
                   <ArrowLeft size={18} />
@@ -348,14 +452,14 @@ export default function BookPage() {
         </Card>
       )}
 
-      {/* Step 3: Payment */}
+      {/* Step 4: Payment */}
       {currentStep === 'payment' && formState.reservationId && guestDetails && hasCompleteDates && (
         <PaymentStep
           reservationId={formState.reservationId}
           totalAmount={pricing ? pricing.total * 100 : 0} // Convert EUR to cents
           checkIn={selectedRange.from!}
           checkOut={selectedRange.to!}
-          guestName={guestDetails.name}
+          guestName={formState.customerName} // Now comes from auth step
           nights={nights}
           onBack={handleBackToGuest}
           onPaymentInitiated={() => {

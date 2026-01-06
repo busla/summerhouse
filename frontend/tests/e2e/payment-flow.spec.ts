@@ -47,24 +47,85 @@ async function selectDate(page: Page, date: Date) {
 
 /**
  * Helper to complete booking form up to payment step.
- * Mocks API responses for reservation creation.
+ * Pre-populates form state to start at guest step directly, bypassing date selection and auth.
+ *
+ * Note: Auth step is tested separately in auth-step.spec.ts.
+ * This helper focuses on testing the payment flow from guest details onward.
+ *
+ * Flow: (Pre-populated to Guest step) → Guest Details form → Payment
  */
 async function completeBookingFormToPayment(page: Page) {
-  // Mock auth
-  await page.addInitScript(() => {
-    // @ts-expect-error - global mock for E2E tests
-    window.__MOCK_AUTH__ = {
-      tokens: {
-        idToken: { toString: () => 'mock-id-token-for-e2e-test' },
-      },
+  const checkIn = addDays(new Date(), 14)
+  const checkOut = addDays(checkIn, 3)
+
+  // Pre-populate form state directly at 'guest' step with all required data
+  // This bypasses the date and auth steps entirely for reliable payment flow testing
+  // IMPORTANT: Only set if no existing state (allows persistence tests to work after reload)
+  await page.addInitScript(
+    ({ name, email, phone, checkInStr, checkOutStr }) => {
+      // Check if state already exists (from previous navigation in same test)
+      const existingState = sessionStorage.getItem('booking-form-state')
+      if (!existingState) {
+        const formState = {
+          currentStep: 'guest', // Start directly at guest step
+          selectedRange: {
+            from: checkInStr,
+            to: checkOutStr,
+          },
+          // Auth fields (pre-filled as if user completed auth)
+          customerName: name,
+          customerEmail: email,
+          customerPhone: phone,
+          authStep: 'authenticated',
+          customerId: 'cust-test-123',
+          // Guest details (null - will be filled in guest step)
+          guestDetails: null,
+          // Payment fields
+          reservationId: null,
+          paymentAttempts: 0,
+          lastPaymentError: null,
+          stripeSessionId: null,
+        }
+        sessionStorage.setItem('booking-form-state', JSON.stringify(formState))
+      }
+
+      // @ts-expect-error - global mock for E2E tests
+      window.__MOCK_AUTH__ = {
+        tokens: {
+          idToken: { toString: () => 'mock-id-token-for-e2e-test' },
+        },
+      }
+    },
+    {
+      name: TEST_GUEST.name,
+      email: TEST_GUEST.email,
+      phone: TEST_GUEST.phone,
+      checkInStr: checkIn.toISOString(),
+      checkOutStr: checkOut.toISOString(),
+    }
+  )
+
+  // Mock customer profile API
+  await page.route('**/api/customers/me', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          customer_id: 'cust-test-123',
+          email: TEST_GUEST.email,
+          name: TEST_GUEST.name,
+          phone: TEST_GUEST.phone,
+        }),
+      })
+    } else {
+      await route.continue()
     }
   })
 
   // Mock reservation creation API
   await page.route('**/api/reservations', async (route) => {
     if (route.request().method() === 'POST') {
-      const checkIn = addDays(new Date(), 14)
-      const checkOut = addDays(checkIn, 3)
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -72,7 +133,7 @@ async function completeBookingFormToPayment(page: Page) {
           reservation_id: MOCK_RESERVATION_ID,
           check_in: format(checkIn, 'yyyy-MM-dd'),
           check_out: format(checkOut, 'yyyy-MM-dd'),
-          num_adults: 2,
+          num_adults: TEST_GUEST.guestCount,
           num_children: 0,
           nights: 3,
           nightly_rate: 12000,
@@ -88,26 +149,10 @@ async function completeBookingFormToPayment(page: Page) {
 
   await page.goto('/book')
 
-  // Step 1: Select dates
-  await expect(page.locator('[data-slot="calendar"]').first()).toBeVisible()
+  // Should start directly at Guest Details step (from pre-populated state)
+  await expect(page.getByText('Guest Details')).toBeVisible({ timeout: 10000 })
 
-  const checkIn = addDays(new Date(), 14)
-  const checkOut = addDays(checkIn, 3)
-
-  await selectDate(page, checkIn)
-  await selectDate(page, checkOut)
-
-  await expect(page.getByText(/night/i)).toBeVisible({ timeout: 10000 })
-  await page.getByRole('button', { name: /continue to guest details/i }).click()
-
-  // Step 2: Fill guest details
-  await expect(page.getByText('Guest Details')).toBeVisible()
-
-  await page.getByLabel(/name/i).fill(TEST_GUEST.name)
-  await page.getByLabel(/email/i).fill(TEST_GUEST.email)
-  await page.getByLabel(/phone/i).fill(TEST_GUEST.phone)
-
-  // Step 3: Submit to go to payment
+  // Guest count select (default is 2, which matches TEST_GUEST.guestCount)
   await page.getByRole('button', { name: /continue to payment/i }).click()
 }
 
@@ -142,9 +187,10 @@ test.describe('Payment Step - Display', () => {
 
     await backButton.click()
 
-    // Should be back on guest details
+    // Should be back on guest details (simplified form - only guest count + special requests)
     await expect(page.getByText('Guest Details')).toBeVisible()
-    await expect(page.getByLabel(/name/i)).toHaveValue(TEST_GUEST.name)
+    // Guest count selector should be visible
+    await expect(page.getByText(/number of guests/i)).toBeVisible()
   })
 
   test('displays info about Stripe redirect', async ({ page }) => {

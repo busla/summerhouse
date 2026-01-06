@@ -16,15 +16,19 @@ An AI agent-driven vacation rental booking platform for a single apartment in Qu
 - Search-optimized metadata for SEO
 
 ### Direct Booking Flow (`/book`)
+- 4-step booking process: Dates → Verify Identity → Guest Details → Payment
 - Visual date picker (React Day Picker) for selecting check-in/check-out dates
 - Real-time availability validation against DynamoDB
 - Instant price breakdown (nightly rate, nights count, cleaning fee, total)
 - Seasonal pricing calculation
 - Minimum night stay enforcement
-- Guest information form (name, email, phone, number of guests)
-- Cognito email verification (OTP-based)
+- **Step 1 - Select Dates**: Date range picker with availability validation
+- **Step 2 - Verify Identity** (AuthStep component): Collects name, email, phone; verifies email via Cognito EMAIL_OTP with 6-digit code input
+- **Step 3 - Guest Details**: Collects guest count (1-4) and special requests
+- **Step 4 - Payment**: Stripe Checkout integration for secure card payments
+- Returning customer recognition: skips auth step if user is already authenticated
 - Complete reservation creation via FastAPI backend
-- Form state persistence using session storage
+- Form state persistence using session storage (survives browser refresh)
 
 ### Property Gallery (`/gallery`)
 - Organized image grid showcasing all rooms and amenities
@@ -123,16 +127,26 @@ booking/
 │   │   │   ├── faq/            # FAQ
 │   │   │   └── contact/        # Contact form
 │   │   ├── components/
-│   │   │   ├── booking/        # Booking widgets (DatePicker, GuestForm, etc.)
+│   │   │   ├── booking/        # Booking widgets
+│   │   │   │   ├── DateRangePicker.tsx
+│   │   │   │   ├── PriceBreakdown.tsx
+│   │   │   │   ├── AuthStep.tsx          # Identity verification (T012-T025)
+│   │   │   │   ├── GuestDetailsForm.tsx  # Simplified guest details (FR-018)
+│   │   │   │   ├── PaymentStep.tsx
+│   │   │   │   └── ...
 │   │   │   ├── home/           # Homepage components (Hero, Highlights)
 │   │   │   ├── ui/             # shadcn/ui component exports
+│   │   │   │   ├── input-otp.tsx        # 6-digit OTP input component
+│   │   │   │   └── ...
 │   │   │   ├── layout/         # Header, Footer, Navigation
 │   │   │   └── providers/      # React context providers
 │   │   ├── hooks/              # Custom React hooks
-│   │   │   ├── useAvailability.ts  # Check date availability
-│   │   │   ├── usePricing.ts       # Calculate pricing
+│   │   │   ├── useAvailability.ts       # Check date availability
+│   │   │   ├── usePricing.ts            # Calculate pricing
 │   │   │   ├── useCreateReservation.ts  # Submit bookings
-│   │   │   └── useAuthenticatedUser.ts  # Cognito OTP auth & session mgmt
+│   │   │   ├── useAuthenticatedUser.ts  # Cognito OTP auth & session mgmt (enhanced)
+│   │   │   ├── useCustomerProfile.ts    # Sync customer profile (T026-T029)
+│   │   │   └── useFormPersistence.ts    # Form state persistence
 │   │   └── lib/                # Utilities
 │   ├── tests/
 │   │   ├── e2e/                # Playwright E2E tests
@@ -156,8 +170,8 @@ booking/
 │   │   │   ├── routes/         # API endpoints
 │   │   │   │   ├── availability.py
 │   │   │   │   ├── pricing.py
-│   │   │   │   ├── reservations.py  (JWT required for create/modify/delete)
-│   │   │   │   ├── customers.py    (JWT required: profile management)
+│   │   │   │   ├── reservations.py      (JWT required for create/modify/delete)
+│   │   │   │   ├── customers.py         (JWT required: profile management - GET/POST/PUT /customers/me)
 │   │   │   │   ├── payments.py
 │   │   │   │   ├── guests.py
 │   │   │   │   ├── property.py
@@ -189,12 +203,20 @@ booking/
     ├── 001-agent-booking-platform/ # Original platform
     ├── 007-tools-api-endpoints/    # REST API endpoints
     ├── 008-rest-api-gateway/       # REST API Gateway migration
-    └── 009-booking-frontend/       # Direct booking UI
-        ├── spec.md             # Complete requirements
+    ├── 009-booking-frontend/       # Direct booking UI
+    │   ├── spec.md
+    │   ├── plan.md
+    │   ├── quickstart.md
+    │   ├── tasks.md
+    │   ├── data-model.md
+    │   ├── research.md
+    │   └── contracts/
+    └── 015-booking-auth-step/      # Dedicated identity verification (AuthStep)
+        ├── spec.md             # Complete requirements (FR-002, FR-004-008)
         ├── plan.md             # Implementation plan
-        ├── quickstart.md       # Getting started guide
-        ├── tasks.md            # Task breakdown
-        ├── data-model.md       # Entity models
+        ├── tasks.md            # Task breakdown (T012-T035)
+        ├── data-model.md       # Updated entity models
+        ├── quickstart.md       # Getting started
         ├── research.md         # Technology research
         └── contracts/          # API contracts
 ```
@@ -281,7 +303,7 @@ User lands on `/` and sees:
 - Availability widget (quick date check)
 - Links to Gallery, Pricing, Location, Agent
 
-### 2. Check Availability
+### 2. Check Availability (Optional)
 User interacts with availability checker:
 - Selects check-in date (today or future)
 - Selects check-out date
@@ -291,7 +313,7 @@ User interacts with availability checker:
 ### 3. Navigate to Booking (`/book`)
 User clicks "Book Now" from availability widget or homepage CTA
 
-### 4. Select Dates & Calculate Pricing
+### 4. Step 1: Select Dates & Calculate Pricing
 - Calendar picker (React Day Picker)
 - Disabled dates from DynamoDB availability table
 - Price calculation via `usePricing` hook calling `POST /api/pricing/calculate`
@@ -300,49 +322,52 @@ User clicks "Book Now" from availability widget or homepage CTA
   - Cleaning fee
   - Total price
 - Enforces minimum night stay requirement
+- Click "Continue" to proceed to Step 2
 
-### 5. Select Guest Count
-- Dropdown for number of guests (1-4, per property max)
-- Validates against property capacity
-
-### 6. Enter Guest Details
-Form collects:
-- Full name (required)
-- Email (required, email format)
-- Phone (required, valid format)
-- Special requests (optional, text area)
-
-Form uses React Hook Form with Zod validation for client-side validation.
-
-Form also integrates `useAuthenticatedUser` hook to detect existing Cognito sessions:
-- If authenticated: email and name fields display as read-only with signed-in banner
-- If anonymous: inline "Verify email" button initiates OTP flow
-- Users can sign out to switch accounts
-
-### 7. Email Verification (Inline OTP)
-After clicking "Verify email" button:
-- `useAuthenticatedUser.initiateAuth(email)` attempts sign-in (existing user) or sign-up (new user)
-- User receives OTP email via Cognito
-- Form transitions to OTP entry state with input field
-- User enters 6-digit code
-- `useAuthenticatedUser.confirmOtp(code)` verifies and establishes session
+### 5. Step 2: Verify Identity (AuthStep Component)
+Dedicated authentication step in the booking flow:
+- Collects: full name, email address, phone number
+- Form uses React Hook Form with Zod validation
+- Click "Verify Email" → initiates Cognito EMAIL_OTP flow
+- User receives 6-digit OTP code via email
+- Input 6-digit code in OTP field (auto-submits when complete)
+- `useAuthenticatedUser` hook handles auth state machine with proper Cognito states
+- After verification succeeds:
+  - `useCustomerProfile` hook syncs profile with backend (/POST /customers/me)
+  - New customers: creates profile and returns customer_id
+  - Returning customers: 409 conflict → fetches existing profile
+  - Graceful fallback to Cognito sub if backend unavailable
 - Error handling with type-aware messaging (network, validation, auth, rate_limit)
-- Retry actions appear based on error type (resend, sign in again, etc.)
+- Buttons: "Back" (to dates), "Change email" (restart OTP), "Resend code" (resend OTP)
+- **Authenticated bypass (US3)**: If user already logged in with stored profile, skips to Step 3
 
-### 8. Create Reservation
-After verification:
-- Frontend calls `POST /api/reservations` with JWT token
-- Backend validates dates haven't changed
-- Creates `booking-{env}-reservations` DynamoDB entry
-- Returns confirmation with reservation ID
+### 6. Step 3: Guest Details
+Form collects:
+- Guest count (1-4, required, dropdown)
+- Special requests (optional, text area)
+- Displays date and price summary
+- Form uses React Hook Form with Zod validation
+- Click "Continue to Payment" to proceed to Step 4
+- Note: Name, email, phone already collected in Step 2
 
-### 9. Confirmation
-Display confirmation screen:
-- Reservation ID
-- Guest name & email
-- Check-in/check-out dates
-- Total price
-- Confirmation email sent to guest
+### 7. Step 4: Payment
+- Stripe Checkout integration for secure card payments
+- Click "Pay Now" redirects to Stripe Checkout session
+- Stripe handles payment processing
+- On success: redirects to `/booking/success`
+- On failure: returns to payment step with error message
+- Maximum 3 payment retry attempts per reservation
+
+### 8. Confirmation
+After successful payment:
+- Redirect to `/booking/success` page
+- Display confirmation screen:
+  - Reservation ID
+  - Guest name & email
+  - Check-in/check-out dates
+  - Total price
+  - Booking reference
+- Confirmation email sent to guest email address
 
 ## Backend API Endpoints
 
@@ -505,21 +530,26 @@ FRONTEND_URL=http://localhost:3000
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Homepage Discovery | ✓ Complete | Hero, highlights, availability widget |
-| Direct Booking Flow | ✓ Complete | Date picker, pricing, form, verification |
+| 4-Step Booking Flow | ✓ Complete | Dates → Verify Identity → Guest Details → Payment |
+| Identity Verification (AuthStep) | ✓ Complete | Dedicated step with name/email/phone + Cognito OTP (FR-002, T012-T025) |
+| Customer Profile Sync | ✓ Complete | POST /customers/me after auth, returns customer_id (T026-T029) |
+| Returning Customer Recognition | ✓ Complete | Skips auth step if already authenticated with profile (US3) |
+| Simplified Guest Details | ✓ Complete | Only guest count + special requests, identity in auth step (FR-018) |
+| 6-Digit OTP Input | ✓ Complete | InputOTP component with auto-submit when complete |
 | Photo Gallery | ✓ Complete | Lightbox with keyboard/touch support |
 | AI Agent Chat | ✓ Complete | All tools available at `/agent` |
 | Location Map | ✓ Complete | POI markers with details |
-| Email Verification | ✓ Complete | OTP via Cognito, inline in form |
-| User Profile Management | ✓ Complete | GET/POST/PUT /customers/me endpoints |
+| Email Verification | ✓ Complete | OTP via Cognito EMAIL_OTP, dedicated step |
+| User Profile Management | ✓ Complete | GET/POST/PUT /customers/me endpoints with JWT |
 | Session Persistence | ✓ Complete | Cognito session auto-restore on page load |
-| Authenticated State Display | ✓ Complete | Read-only fields + sign-out option |
+| Form State Persistence | ✓ Complete | Multi-step booking state survives browser refresh |
+| Authenticated Bypass | ✓ Complete | Skip auth if already authenticated (US3) |
 | Seasonal Pricing | ✓ Complete | Rate calculation per period |
 | Availability Calendar | ✓ Complete | Real-time DynamoDB checks |
 | Price Breakdown | ✓ Complete | Nightly rate + cleaning fee |
-| Session Storage | ✓ Complete | Form state persistence |
 | Mobile Responsive | ✓ Complete | Tailwind-based design |
 | Accessibility (WCAG AA) | ✓ Complete | Keyboard nav, screen reader support |
-| E2E Tests | ✓ Complete | Direct booking flow coverage |
+| E2E Tests | ✓ Complete | Direct booking flow including auth step |
 | Stripe Payments | ✓ Complete | Checkout sessions, refunds, webhook handling |
 | Payment Retry | ✓ Complete | Max 3 attempts per reservation |
 | Refund Policy | ✓ Complete | Policy-based refund calculation (14d, 7d tiers) |
@@ -529,20 +559,37 @@ FRONTEND_URL=http://localhost:3000
 
 ### E2E Test Coverage
 
-**File**: `frontend/tests/e2e/direct-booking.spec.ts`
+**Main Test File**: `frontend/tests/e2e/direct-booking.spec.ts`
 
 Complete user journey tests:
 1. Navigate to homepage
-2. Open booking widget
-3. Select dates
-4. Verify availability
-5. Calculate pricing
-6. Navigate to booking page
-7. Fill guest details form
-8. Submit booking
-9. Verify email sent
-10. Enter OTP verification
-11. Confirmation displayed
+2. Navigate to /book
+3. **Step 1 (Dates)**: Select check-in/check-out dates, verify pricing
+4. Click Continue to proceed
+5. **Step 2 (AuthStep)**:
+   - Fill name, email, phone
+   - Click "Verify Email"
+   - Receive OTP code via Cognito
+   - Enter 6-digit OTP code
+   - Verify authentication completes
+6. **Step 3 (Guest Details)**:
+   - Select guest count
+   - Add special requests
+   - Click "Continue to Payment"
+7. **Step 4 (Payment)**:
+   - Stripe Checkout session created
+   - User redirected to Stripe
+8. Post-payment: Redirected to `/booking/success`
+
+**Additional Test Files**:
+- `frontend/tests/e2e/auth-step.spec.ts` - AuthStep component tests
+- `frontend/tests/e2e/payment-flow.spec.ts` - Stripe payment tests
+- `frontend/tests/e2e/routing.spec.ts` - Multi-step navigation tests
+
+**Unit Tests**:
+- `frontend/tests/unit/components/booking/AuthStep.test.tsx` - AuthStep component
+- `frontend/tests/unit/components/booking/GuestDetailsForm.test.tsx` - Guest details form
+- `frontend/tests/unit/hooks/useAuthenticatedUser.test.ts` - Auth hook
 
 ### Running E2E Tests
 

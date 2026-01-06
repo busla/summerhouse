@@ -225,7 +225,7 @@ tasks:
       - uv run python scripts/generate_types.py
 
   # ============================================================================
-  # Data Seeding
+  # Data Seeding & Cleanup
   # ============================================================================
 
   seed:*:
@@ -239,6 +239,28 @@ tasks:
       AWS_DEFAULT_REGION: "{{.REGION}}"
     cmds:
       - uv run python scripts/seed_data.py --env {{.ENV}} --region {{.REGION}} {{.CLI_ARGS}}
+
+  cleanup:*:
+    desc: "Clean transactional data (usage: task cleanup:<env> [-- --dry-run] [-- --include-cognito])"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+      REGION: '{{if eq (index .MATCH 0) "prod"}}eu-west-1{{else}}eu-west-1{{end}}'
+    dir: backend
+    env:
+      AWS_DEFAULT_REGION: "{{.REGION}}"
+    cmds:
+      - uv run python scripts/cleanup_data.py --env {{.ENV}} --region {{.REGION}} {{.CLI_ARGS}}
+
+  cleanup-all:*:
+    desc: "Clean ALL data including Cognito users (usage: task cleanup-all:<env> [-- --dry-run])"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+      REGION: '{{if eq (index .MATCH 0) "prod"}}eu-west-1{{else}}eu-west-1{{end}}'
+    dir: backend
+    env:
+      AWS_DEFAULT_REGION: "{{.REGION}}"
+    cmds:
+      - uv run python scripts/cleanup_data.py --env {{.ENV}} --region {{.REGION}} --include-cognito {{.CLI_ARGS}}
 
   # ============================================================================
   # Internal Tasks (reusable templates)

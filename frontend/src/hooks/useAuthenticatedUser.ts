@@ -7,11 +7,13 @@
  * Created as part of T005b (Green Phase).
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   signIn,
   signUp,
   confirmSignIn,
+  confirmSignUp,
+  autoSignIn,
   getCurrentUser,
   fetchAuthSession,
   signOut as amplifySignOut,
@@ -215,6 +217,12 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
   const [error, setError] = useState<string | null>(null)
   const [errorType, setErrorType] = useState<ErrorType>(null)
 
+  // Track whether current flow is for a new user (signup) vs existing user (signin)
+  // This determines whether confirmOtp should call confirmSignUp or confirmSignIn
+  const isNewUserFlow = useRef(false)
+  // Store email for new user signup (needed for confirmSignUp API)
+  const pendingEmail = useRef<string | null>(null)
+
   // Check existing session on mount
   useEffect(() => {
     async function checkSession() {
@@ -266,6 +274,11 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
   /**
    * Initiate authentication with EMAIL_OTP flow.
    * Tries signIn first (existing user), falls back to signUp (new user).
+   *
+   * Handles multiple signIn response states:
+   * - CONFIRM_SIGN_IN_WITH_EMAIL_CODE: Normal OTP flow, await code
+   * - DONE: Already signed in (e.g., tokens still valid), transition to authenticated
+   * - Others: Log and show error
    */
   const initiateAuth = useCallback(async (email: string) => {
     setError(null)
@@ -273,9 +286,17 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
     setStep('sending_otp')
     authLogger.otpInitiated(email)
 
+    // Reset flow tracking - assume existing user until proven otherwise
+    isNewUserFlow.current = false
+    pendingEmail.current = email
+
     try {
-      // Try sign in first (existing user)
-      const { nextStep } = await signIn({
+      // NOTE: Do NOT call signOut() before signIn() - this breaks the Cognito USER_AUTH flow
+      // by clearing session context, causing Cognito to return CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION
+      // instead of going directly to CONFIRM_SIGN_IN_WITH_EMAIL_CODE
+
+      // Try sign in (existing user)
+      const { nextStep, isSignedIn } = await signIn({
         username: email,
         options: {
           authFlowType: 'USER_AUTH',
@@ -283,15 +304,94 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
         },
       })
 
+      console.debug('[auth] signIn response', { signInStep: nextStep.signInStep, isSignedIn })
+
       if (nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE') {
         setStep('awaiting_otp')
         authLogger.otpSent(email, false)
+      } else if (nextStep.signInStep === 'CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION') {
+        // Cognito is asking us to select an auth factor
+        // This can happen when there's incomplete auth state or preferredChallenge wasn't applied
+        const availableChallenges = (nextStep as { availableChallenges?: string[] }).availableChallenges
+        console.info('[auth] available challenges:', availableChallenges)
+
+        // Always attempt EMAIL_OTP selection - let Cognito reject if invalid
+        // Don't preemptively block based on availableChallenges which may be stale
+        console.debug('[auth] selecting EMAIL_OTP factor')
+        const selectResult = await confirmSignIn({ challengeResponse: 'EMAIL_OTP' })
+
+        if (selectResult.nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE') {
+          setStep('awaiting_otp')
+          authLogger.otpSent(email, false)
+        } else if (selectResult.isSignedIn) {
+          // Unexpected but handle gracefully
+          const currentUser = await getCurrentUser()
+          const session = await fetchAuthSession()
+          const claims = session.tokens?.idToken?.payload
+          const userEmail = claims?.email as string
+          setUser({
+            email: userEmail,
+            name: claims?.name as string | undefined,
+            sub: currentUser.userId,
+          })
+          setStep('authenticated')
+          authLogger.authSuccess(currentUser.userId, userEmail)
+        } else {
+          console.warn('[auth] unexpected step after factor selection:', selectResult.nextStep.signInStep)
+          setError('Authentication configuration error. Please try again.')
+          setErrorType('auth')
+          setStep('anonymous')
+        }
+      } else if (isSignedIn || nextStep.signInStep === 'DONE') {
+        // User was already authenticated - fetch session and complete
+        const currentUser = await getCurrentUser()
+        const session = await fetchAuthSession()
+        const claims = session.tokens?.idToken?.payload
+
+        const userEmail = claims?.email as string
+        setUser({
+          email: userEmail,
+          name: claims?.name as string | undefined,
+          sub: currentUser.userId,
+        })
+        setStep('authenticated')
+        authLogger.authSuccess(currentUser.userId, userEmail)
+      } else {
+        // Unexpected step - log and show error
+        console.warn('[auth] unexpected signIn step:', nextStep.signInStep)
+        setError(`Unexpected authentication state: ${nextStep.signInStep}. Please try again.`)
+        setErrorType('auth')
+        setStep('anonymous')
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'UserNotFoundException') {
-        // New user - sign up
+      if (err instanceof Error && err.name === 'UserAlreadyAuthenticatedException') {
+        // User already has an active session - fetch their info and mark authenticated
+        console.info('[auth] user already authenticated, fetching session')
         try {
-          await signUp({
+          const currentUser = await getCurrentUser()
+          const session = await fetchAuthSession()
+          const claims = session.tokens?.idToken?.payload
+          const userEmail = claims?.email as string
+          setUser({
+            email: userEmail,
+            name: claims?.name as string | undefined,
+            sub: currentUser.userId,
+          })
+          setStep('authenticated')
+          authLogger.authSuccess(currentUser.userId, userEmail)
+          return
+        } catch {
+          // If fetching session fails, continue to show error
+          console.warn('[auth] failed to fetch existing session')
+        }
+      }
+
+      if (err instanceof Error && err.name === 'UserNotFoundException') {
+        // New user - sign up flow (requires confirmSignUp, NOT confirmSignIn)
+        isNewUserFlow.current = true
+
+        try {
+          const signUpResult = await signUp({
             username: email,
             password: crypto.randomUUID(), // Required but unused for EMAIL_OTP
             options: {
@@ -299,8 +399,44 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
               autoSignIn: { authFlowType: 'USER_AUTH' },
             },
           })
-          setStep('awaiting_otp')
-          authLogger.otpSent(email, true)
+
+          console.debug('[auth] signUp response', {
+            signUpStep: signUpResult.nextStep.signUpStep,
+            isSignUpComplete: signUpResult.isSignUpComplete,
+            // codeDeliveryDetails only exists for CONFIRM_SIGN_UP step
+            codeDeliveryDetails: 'codeDeliveryDetails' in signUpResult.nextStep
+              ? signUpResult.nextStep.codeDeliveryDetails
+              : undefined,
+          })
+
+          if (signUpResult.nextStep.signUpStep === 'CONFIRM_SIGN_UP') {
+            // OTP was sent to email - await user input
+            setStep('awaiting_otp')
+            authLogger.otpSent(email, true)
+          } else if (signUpResult.isSignUpComplete) {
+            // Unexpected: user was signed up without confirmation needed
+            // Try auto sign in
+            console.info('[auth] signUp completed immediately, attempting autoSignIn')
+            const autoSignInResult = await autoSignIn()
+            if (autoSignInResult.isSignedIn) {
+              const currentUser = await getCurrentUser()
+              const session = await fetchAuthSession()
+              const claims = session.tokens?.idToken?.payload
+              const userEmail = claims?.email as string
+              setUser({
+                email: userEmail,
+                name: claims?.name as string | undefined,
+                sub: currentUser.userId,
+              })
+              setStep('authenticated')
+              authLogger.authSuccess(currentUser.userId, userEmail)
+            }
+          } else {
+            console.warn('[auth] unexpected signUp step:', signUpResult.nextStep.signUpStep)
+            setError('Unexpected signup state. Please try again.')
+            setErrorType('auth')
+            setStep('anonymous')
+          }
         } catch (signUpErr) {
           const { type, message } = categorizeError(signUpErr)
           authLogger.authError(type, signUpErr instanceof Error ? signUpErr.name : 'Unknown', 'signUp')
@@ -320,6 +456,9 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
 
   /**
    * Confirm OTP code to complete authentication.
+   *
+   * For EXISTING users (signin flow): calls confirmSignIn()
+   * For NEW users (signup flow): calls confirmSignUp() → autoSignIn()
    */
   const confirmOtp = useCallback(async (code: string) => {
     setError(null)
@@ -328,21 +467,105 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
     authLogger.otpVerifying()
 
     try {
-      const result = await confirmSignIn({ challengeResponse: code })
+      if (isNewUserFlow.current) {
+        // NEW USER FLOW: confirmSignUp → autoSignIn
+        console.debug('[auth] confirming signup for new user')
 
-      if (result.isSignedIn) {
-        const currentUser = await getCurrentUser()
-        const session = await fetchAuthSession()
-        const claims = session.tokens?.idToken?.payload
+        const email = pendingEmail.current
+        if (!email) {
+          throw new Error('Email not found for signup confirmation')
+        }
 
-        const email = claims?.email as string
-        setUser({
-          email,
-          name: claims?.name as string | undefined,
-          sub: currentUser.userId,
+        const confirmResult = await confirmSignUp({
+          username: email,
+          confirmationCode: code,
         })
-        setStep('authenticated')
-        authLogger.authSuccess(currentUser.userId, email)
+
+        console.debug('[auth] confirmSignUp response', {
+          signUpStep: confirmResult.nextStep.signUpStep,
+          isSignUpComplete: confirmResult.isSignUpComplete,
+        })
+
+        if (confirmResult.nextStep.signUpStep === 'COMPLETE_AUTO_SIGN_IN') {
+          // Sign up confirmed, now auto sign in
+          console.info('[auth] signup confirmed, calling autoSignIn')
+          const autoSignInResult = await autoSignIn()
+
+          if (autoSignInResult.isSignedIn) {
+            const currentUser = await getCurrentUser()
+            const session = await fetchAuthSession()
+            const claims = session.tokens?.idToken?.payload
+
+            const userEmail = claims?.email as string
+            setUser({
+              email: userEmail,
+              name: claims?.name as string | undefined,
+              sub: currentUser.userId,
+            })
+            setStep('authenticated')
+            authLogger.authSuccess(currentUser.userId, userEmail)
+          } else {
+            // Auto sign in not complete, may need additional steps
+            console.warn('[auth] autoSignIn step:', autoSignInResult.nextStep)
+            setError('Please sign in to complete registration.')
+            setErrorType('auth')
+            setStep('anonymous')
+          }
+        } else if (confirmResult.isSignUpComplete) {
+          // Signup complete without auto sign in - try manual auto sign in
+          console.info('[auth] signup complete, attempting autoSignIn')
+          const autoSignInResult = await autoSignIn()
+
+          if (autoSignInResult.isSignedIn) {
+            const currentUser = await getCurrentUser()
+            const session = await fetchAuthSession()
+            const claims = session.tokens?.idToken?.payload
+
+            const userEmail = claims?.email as string
+            setUser({
+              email: userEmail,
+              name: claims?.name as string | undefined,
+              sub: currentUser.userId,
+            })
+            setStep('authenticated')
+            authLogger.authSuccess(currentUser.userId, userEmail)
+          } else {
+            console.warn('[auth] autoSignIn failed, step:', autoSignInResult.nextStep)
+            setError('Registration complete. Please sign in.')
+            setErrorType('auth')
+            setStep('anonymous')
+          }
+        } else {
+          console.warn('[auth] unexpected confirmSignUp step:', confirmResult.nextStep.signUpStep)
+          setError('Unexpected signup state. Please try again.')
+          setErrorType('auth')
+          setStep('anonymous')
+        }
+      } else {
+        // EXISTING USER FLOW: confirmSignIn
+        console.debug('[auth] confirming signin for existing user')
+
+        const result = await confirmSignIn({ challengeResponse: code })
+
+        if (result.isSignedIn) {
+          const currentUser = await getCurrentUser()
+          const session = await fetchAuthSession()
+          const claims = session.tokens?.idToken?.payload
+
+          const email = claims?.email as string
+          setUser({
+            email,
+            name: claims?.name as string | undefined,
+            sub: currentUser.userId,
+          })
+          setStep('authenticated')
+          authLogger.authSuccess(currentUser.userId, email)
+        } else {
+          console.warn('[auth] confirmSignIn not signed in, step:', result.nextStep)
+          setError('Verification incomplete. Please try again.')
+          setErrorType('auth')
+          setStep('awaiting_otp')
+        }
       }
     } catch (err) {
       const { type, message } = categorizeError(err)
@@ -364,8 +587,9 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
   }, [])
 
   /**
-   * Retry after an error - clears error state and resets to appropriate step (T034).
-   * For network errors, resets to anonymous to allow fresh attempt.
+   * Retry after an error or reset to form state (T034).
+   * Clears error state and resets to anonymous to allow fresh attempt.
+   * Also used for "Change email" flow from OTP view.
    */
   const retry = useCallback(() => {
     const currentErrorType = errorType
@@ -373,10 +597,12 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
     setError(null)
     setErrorType(null)
 
-    // Network errors should reset to anonymous for fresh attempt
-    if (currentErrorType === 'network') {
-      setStep('anonymous')
-    }
+    // Reset flow tracking
+    isNewUserFlow.current = false
+    pendingEmail.current = null
+
+    // Reset to anonymous for fresh attempt (handles both error recovery and "change email")
+    setStep('anonymous')
   }, [errorType])
 
   return {

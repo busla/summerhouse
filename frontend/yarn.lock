@@ -5786,6 +5786,7 @@ __metadata:
     date-fns: "npm:^4.1.0"
     eslint: "npm:^8.57.0"
     eslint-config-next: "npm:^14.2.0"
+    input-otp: "npm:^1.4.2"
     jsdom: "npm:^25.0.0"
     leaflet: "npm:^1.9.4"
     lucide-react: "npm:^0.468.0"
@@ -7913,6 +7914,16 @@ __metadata:
   version: 2.0.4
   resolution: "inherits@npm:2.0.4"
   checksum: 10/cd45e923bee15186c07fa4c89db0aace24824c482fb887b528304694b2aa6ff8a898da8657046a5dcf3e46cd6db6c61629551f9215f208d7c3f157cf9b290521
+  languageName: node
+  linkType: hard
+
+"input-otp@npm:^1.4.2":
+  version: 1.4.2
+  resolution: "input-otp@npm:1.4.2"
+  peerDependencies:
+    react: ^16.8 || ^17.0 || ^18.0 || ^19.0.0 || ^19.0.0-rc
+    react-dom: ^16.8 || ^17.0 || ^18.0 || ^19.0.0 || ^19.0.0-rc
+  checksum: 10/7dfaa30ecda1640a1e6f78be05c52de58e35134f34684709b065abb47cae23c054cb4d87df8af317f8ecb4ef384167f3237aa31cd2601bed5f8ca88ed93b7452
   languageName: node
   linkType: hard
 

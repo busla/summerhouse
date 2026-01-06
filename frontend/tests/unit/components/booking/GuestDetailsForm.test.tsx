@@ -1,471 +1,174 @@
 /**
- * Component tests for GuestDetailsForm (T012a, T017a).
+ * Component tests for GuestDetailsForm (Simplified per FR-018).
  *
- * TDD Red Phase: Tests define expected behavior for authenticated and anonymous states.
+ * The GuestDetailsForm now only collects:
+ * - guestCount (1-4 guests via dropdown)
+ * - specialRequests (optional textarea)
  *
- * T012a [US2]: Authenticated state tests - read-only display, sign-out link visibility
- * T017a [US3]: Anonymous state tests - editable fields, verify email button
+ * Identity fields (name, email, phone) and OTP verification
+ * are now handled by AuthStep component.
  */
 
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-// Mock aws-amplify/auth before importing components
-vi.mock('aws-amplify/auth', () => ({
-  getCurrentUser: vi.fn(),
-  fetchAuthSession: vi.fn(),
-  signIn: vi.fn(),
-  signUp: vi.fn(),
-  confirmSignIn: vi.fn(),
-  signOut: vi.fn(),
-}))
-
-import {
-  getCurrentUser,
-  fetchAuthSession,
-  signIn,
-  confirmSignIn,
-  signOut as amplifySignOut,
-} from 'aws-amplify/auth'
-
 import { GuestDetailsForm } from '@/components/booking/GuestDetailsForm'
-import { AuthErrorBoundary } from '@/components/booking/AuthErrorBoundary'
 
-// Type mocks
-const mockGetCurrentUser = getCurrentUser as Mock
-const mockFetchAuthSession = fetchAuthSession as Mock
-const mockAmplifySignOut = amplifySignOut as Mock
-
-// Helper to setup authenticated state
-function setupAuthenticatedUser(overrides: {
-  email?: string
-  name?: string
-  sub?: string
-} = {}) {
-  const defaults = {
-    email: 'authenticated@example.com',
-    name: 'Test User',
-    sub: 'cognito-sub-123',
-  }
-  const user = { ...defaults, ...overrides }
-
-  mockGetCurrentUser.mockResolvedValue({
-    userId: user.sub,
-    username: user.email,
-  })
-  mockFetchAuthSession.mockResolvedValue({
-    tokens: {
-      idToken: {
-        payload: {
-          email: user.email,
-          name: user.name,
-        },
-      },
-    },
-  })
-
-  return user
+/**
+ * Helper to change Radix UI Select value in jsdom.
+ * Radix renders a hidden native <select> for accessibility that we can target directly.
+ */
+function changeRadixSelect(container: HTMLElement, value: string) {
+  const nativeSelect = container.querySelector('select[aria-hidden="true"]') as HTMLSelectElement
+  if (!nativeSelect) throw new Error('Native select not found')
+  fireEvent.change(nativeSelect, { target: { value } })
 }
 
-// Helper to setup anonymous state
-function setupAnonymousUser() {
-  mockGetCurrentUser.mockRejectedValue(new Error('Not authenticated'))
-  mockFetchAuthSession.mockResolvedValue({ tokens: null })
-}
-
-describe('GuestDetailsForm', () => {
+describe('GuestDetailsForm (Simplified)', () => {
   const mockOnSubmit = vi.fn()
+  const mockOnChange = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
-    setupAnonymousUser() // Default to anonymous
   })
 
-  // === T017a: Anonymous State Tests [US3] ===
+  // === Basic Rendering Tests ===
 
-  describe('anonymous state (T017a)', () => {
-    // beforeEach already sets up anonymous state by default
-
-    it('shows editable email field when anonymous', async () => {
+  describe('renders correctly', () => {
+    it('displays guest count dropdown', () => {
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      await waitFor(() => {
-        const emailInput = screen.getByLabelText(/email/i)
-        expect(emailInput).not.toBeDisabled()
-      })
+      expect(screen.getByText('Number of Guests')).toBeInTheDocument()
+      expect(screen.getByRole('combobox')).toBeInTheDocument()
     })
 
-    it('shows editable name field when anonymous', async () => {
+    it('displays special requests textarea', () => {
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      await waitFor(() => {
-        const nameInput = screen.getByLabelText(/full name/i)
-        expect(nameInput).not.toBeDisabled()
-      })
+      expect(screen.getByText('Special Requests (Optional)')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/early check-in/i)).toBeInTheDocument()
     })
 
-    it('allows typing in email field when anonymous', async () => {
-      const user = userEvent.setup()
+    it('shows maximum guests helper text', () => {
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-
-      expect(emailInput).toHaveValue('test@example.com')
-    })
-
-    it('allows typing in name field when anonymous', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      const nameInput = screen.getByLabelText(/full name/i)
-      await user.type(nameInput, 'John Doe')
-
-      expect(nameInput).toHaveValue('John Doe')
-    })
-
-    it('shows "Verify email" button when anonymous', async () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        const verifyButton = screen.getByRole('button', { name: /verify email/i })
-        expect(verifyButton).toBeInTheDocument()
-      })
-    })
-
-    it('does NOT show sign-out button when anonymous', async () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Give time for async checks
-      await waitFor(() => {
-        expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
-      })
-
-      expect(screen.queryByRole('button', { name: /sign out/i })).not.toBeInTheDocument()
-    })
-
-    it('does NOT show authenticated banner when anonymous', async () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Wait for initial render
-      await waitFor(() => {
-        expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
-      })
-
-      expect(screen.queryByLabelText(/authenticated/i)).not.toBeInTheDocument()
-      expect(screen.queryByText(/signed in/i)).not.toBeInTheDocument()
-    })
-
-    // T018a: Verify email button calls initiateAuth
-    it('calls initiateAuth with email when "Verify email" button is clicked', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Enter email first
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'newuser@example.com')
-
-      // Click verify email button
-      const verifyButton = screen.getByRole('button', { name: /verify email/i })
-      await user.click(verifyButton)
-
-      // Should have called Amplify signIn with USER_AUTH flow
-      expect(signIn).toHaveBeenCalledWith({
-        username: 'newuser@example.com',
-        options: {
-          authFlowType: 'USER_AUTH',
-          preferredChallenge: 'EMAIL_OTP',
-        },
-      })
-    })
-
-    it('does not call initiateAuth when email is empty', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Click verify email button without entering email
-      const verifyButton = screen.getByRole('button', { name: /verify email/i })
-      await user.click(verifyButton)
-
-      // Should NOT have called signIn
-      expect(signIn).not.toHaveBeenCalled()
-    })
-
-    // T019a: Loading state while sending OTP
-    it('disables "Verify email" button while sending OTP', async () => {
-      const user = userEvent.setup()
-
-      // Create a delayed promise to observe loading state
-      let resolveSignIn: (value: unknown) => void
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockReturnValue(
-        new Promise((resolve) => {
-          resolveSignIn = resolve
-        })
-      )
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Enter email
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-
-      // Click verify email button
-      const verifyButton = screen.getByRole('button', { name: /verify email/i })
-      await user.click(verifyButton)
-
-      // Button should be disabled while sending
-      await waitFor(() => {
-        expect(verifyButton).toBeDisabled()
-      })
-
-      // Complete the signIn
-      await act(async () => {
-        resolveSignIn!({
-          nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-        })
-      })
-    })
-
-    it('shows "Sending..." text while sending OTP', async () => {
-      const user = userEvent.setup()
-
-      // Create a delayed promise to observe loading state
-      let resolveSignIn: (value: unknown) => void
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockReturnValue(
-        new Promise((resolve) => {
-          resolveSignIn = resolve
-        })
-      )
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Enter email
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-
-      // Click verify email button
-      const verifyButton = screen.getByRole('button', { name: /verify email/i })
-      await user.click(verifyButton)
-
-      // Should show loading state
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /sending/i })).toBeInTheDocument()
-      })
-
-      // Complete the signIn
-      await act(async () => {
-        resolveSignIn!({
-          nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-        })
-      })
+      expect(screen.getByText(/maximum 4 guests allowed/i)).toBeInTheDocument()
     })
   })
 
-  // === T012a: Authenticated State Tests [US2] ===
+  // === Guest Count Selection Tests ===
 
-  describe('authenticated state (T012a)', () => {
-    beforeEach(() => {
-      setupAuthenticatedUser()
-    })
-
-    it('displays user email as read-only when authenticated', async () => {
+  describe('guest count selection', () => {
+    it('defaults to 2 guests', () => {
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      await waitFor(() => {
-        // Should display email in read-only format
-        expect(screen.getByText('authenticated@example.com')).toBeInTheDocument()
-      })
-
-      // Email input should not be editable
-      const emailInput = screen.queryByRole('textbox', { name: /email/i })
-      if (emailInput) {
-        expect(emailInput).toBeDisabled()
-      }
+      const combobox = screen.getByRole('combobox')
+      expect(combobox).toHaveTextContent('2 guests')
     })
 
-    it('displays user name as read-only when authenticated', async () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        // Should display name in read-only format
-        expect(screen.getByText('Test User')).toBeInTheDocument()
-      })
-
-      // Name input should not be editable
-      const nameInput = screen.queryByRole('textbox', { name: /name/i })
-      if (nameInput) {
-        expect(nameInput).toBeDisabled()
-      }
-    })
-
-    it('shows sign-out link when authenticated', async () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        const signOutLink = screen.getByRole('button', { name: /sign out/i })
-        expect(signOutLink).toBeInTheDocument()
-      })
-    })
-
-    it('calls signOut when sign-out link is clicked', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
-      })
-
-      const signOutButton = screen.getByRole('button', { name: /sign out/i })
-      await user.click(signOutButton)
-
-      expect(mockAmplifySignOut).toHaveBeenCalled()
-    })
-
-    it('still allows editing phone field when authenticated', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        expect(screen.getByText('authenticated@example.com')).toBeInTheDocument()
-      })
-
-      // Phone field should still be editable
-      const phoneInput = screen.getByRole('textbox', { name: /phone/i })
-      expect(phoneInput).not.toBeDisabled()
-
-      await user.type(phoneInput, '+34 612 345 678')
-      expect(phoneInput).toHaveValue('+34 612 345 678')
-    })
-
-    it('still allows editing special requests when authenticated', async () => {
-      const user = userEvent.setup()
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        expect(screen.getByText('authenticated@example.com')).toBeInTheDocument()
-      })
-
-      // Special requests field should still be editable
-      const requestsInput = screen.getByRole('textbox', { name: /special requests/i })
-      expect(requestsInput).not.toBeDisabled()
-
-      await user.type(requestsInput, 'Late check-in')
-      expect(requestsInput).toHaveValue('Late check-in')
-    })
-
-    it('uses authenticated email when form is submitted', async () => {
-      const user = userEvent.setup()
+    it('displays selected guest count correctly', () => {
+      // Radix Select interaction doesn't work in jsdom, so we use defaultValues
+      // to verify the component displays values correctly
       render(
-        <GuestDetailsForm onSubmit={mockOnSubmit}>
-          <button type="submit">Continue</button>
-        </GuestDetailsForm>
+        <GuestDetailsForm
+          onSubmit={mockOnSubmit}
+          defaultValues={{ guestCount: 3 }}
+        />
       )
 
-      await waitFor(() => {
-        expect(screen.getByText('authenticated@example.com')).toBeInTheDocument()
-      })
-
-      // Fill required fields (phone is required per schema)
-      const phoneInput = screen.getByRole('textbox', { name: /phone/i })
-      await user.type(phoneInput, '+34 612 345 678')
-
-      // Submit form
-      const submitButton = screen.getByRole('button', { name: /continue/i })
-      await user.click(submitButton)
-
-      await waitFor(() => {
-        expect(mockOnSubmit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            email: 'authenticated@example.com',
-            name: 'Test User',
-          })
-        )
-      })
+      expect(screen.getByRole('combobox')).toHaveTextContent('3 guests')
     })
 
-    it('shows authenticated user badge or indicator', async () => {
+    it('shows options from 1 to 4 guests', async () => {
+      const user = userEvent.setup()
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      await waitFor(() => {
-        // Should show some indicator that user is signed in
-        expect(
-          screen.getByText(/signed in/i) ||
-            screen.getByText(/logged in/i) ||
-            screen.getByLabelText(/authenticated/i)
-        ).toBeInTheDocument()
-      })
+      // Open dropdown
+      await user.click(screen.getByRole('combobox'))
+
+      expect(screen.getByRole('option', { name: '1 guest' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '2 guests' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '3 guests' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '4 guests' })).toBeInTheDocument()
     })
 
-    it('handles user with name undefined gracefully', async () => {
-      setupAuthenticatedUser({ name: undefined })
+    it('uses singular "guest" for 1 guest', () => {
+      // Radix Select interaction doesn't work in jsdom
+      render(
+        <GuestDetailsForm
+          onSubmit={mockOnSubmit}
+          defaultValues={{ guestCount: 1 }}
+        />
+      )
 
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      await waitFor(() => {
-        expect(screen.getByText('authenticated@example.com')).toBeInTheDocument()
-      })
-
-      // Should not crash, name field may show placeholder or be editable
+      expect(screen.getByRole('combobox')).toHaveTextContent('1 guest')
     })
   })
 
-  // === Basic Form Tests (existing behavior) ===
+  // === Special Requests Tests ===
 
-  describe('form rendering', () => {
-    it('renders all form fields', () => {
+  describe('special requests', () => {
+    it('allows entering special requests', async () => {
+      const user = userEvent.setup()
       render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      expect(screen.getByLabelText(/full name/i)).toBeInTheDocument()
-      expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
-      expect(screen.getByLabelText(/phone/i)).toBeInTheDocument()
-      expect(screen.getByLabelText(/number of guests/i)).toBeInTheDocument()
-      expect(screen.getByLabelText(/special requests/i)).toBeInTheDocument()
+      const textarea = screen.getByPlaceholderText(/early check-in/i)
+      await user.type(textarea, 'Late check-in please')
+
+      expect(textarea).toHaveValue('Late check-in please')
     })
 
-    it('renders children (submit button)', () => {
+    it('accepts default value for special requests', () => {
       render(
-        <GuestDetailsForm onSubmit={mockOnSubmit}>
-          <button type="submit">Continue to Payment</button>
-        </GuestDetailsForm>
+        <GuestDetailsForm
+          onSubmit={mockOnSubmit}
+          defaultValues={{ specialRequests: 'Pre-filled request' }}
+        />
       )
 
-      expect(
-        screen.getByRole('button', { name: /continue to payment/i })
-      ).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/early check-in/i)).toHaveValue(
+        'Pre-filled request'
+      )
+    })
+  })
+
+  // === Default Values Tests ===
+
+  describe('default values', () => {
+    it('accepts default guest count', () => {
+      render(
+        <GuestDetailsForm
+          onSubmit={mockOnSubmit}
+          defaultValues={{ guestCount: 3 }}
+        />
+      )
+
+      expect(screen.getByRole('combobox')).toHaveTextContent('3 guests')
     })
 
-    it('applies defaultValues to form fields', async () => {
+    it('accepts combined default values', () => {
       render(
         <GuestDetailsForm
           onSubmit={mockOnSubmit}
           defaultValues={{
-            name: 'Default Name',
-            email: 'default@example.com',
-            phone: '+1234567890',
+            guestCount: 4,
+            specialRequests: 'Need parking',
           }}
         />
       )
 
-      expect(screen.getByDisplayValue('Default Name')).toBeInTheDocument()
-      expect(screen.getByDisplayValue('default@example.com')).toBeInTheDocument()
-      expect(screen.getByDisplayValue('+1234567890')).toBeInTheDocument()
-    })
-
-    it('disables form fields when isSubmitting is true', () => {
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} isSubmitting={true} />)
-
-      expect(screen.getByLabelText(/full name/i)).toBeDisabled()
-      expect(screen.getByLabelText(/email/i)).toBeDisabled()
-      expect(screen.getByLabelText(/phone/i)).toBeDisabled()
-      expect(screen.getByLabelText(/special requests/i)).toBeDisabled()
+      expect(screen.getByRole('combobox')).toHaveTextContent('4 guests')
+      expect(screen.getByPlaceholderText(/early check-in/i)).toHaveValue(
+        'Need parking'
+      )
     })
   })
+
+  // === Form Submission Tests ===
 
   describe('form submission', () => {
-    it('calls onSubmit with form data when valid', async () => {
+    it('submits with default values when no changes made', async () => {
       const user = userEvent.setup()
       render(
         <GuestDetailsForm onSubmit={mockOnSubmit}>
@@ -473,25 +176,35 @@ describe('GuestDetailsForm', () => {
         </GuestDetailsForm>
       )
 
-      await user.type(screen.getByLabelText(/full name/i), 'John Doe')
-      await user.type(screen.getByLabelText(/email/i), 'john@example.com')
-      await user.type(screen.getByLabelText(/phone/i), '+34 612 345 678')
-
-      await user.click(screen.getByRole('button', { name: /submit/i }))
+      await user.click(screen.getByRole('button', { name: 'Submit' }))
 
       await waitFor(() => {
-        expect(mockOnSubmit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            name: 'John Doe',
-            email: 'john@example.com',
-            phone: '+34 612 345 678',
-            guestCount: 2, // default value
-          })
-        )
+        expect(mockOnSubmit).toHaveBeenCalled()
+        // react-hook-form passes (data, event) - check first argument
+        const [formData] = mockOnSubmit.mock.calls[0]
+        expect(formData).toEqual({
+          guestCount: 2,
+          specialRequests: '',
+        })
       })
     })
 
-    it('shows validation errors for invalid email', async () => {
+    it('displays correct guest count when using defaultValues', () => {
+      // Radix Select + react-hook-form in jsdom: defaultValues affects display
+      // but form submission reads from react-hook-form's internal state which
+      // doesn't sync from uncontrolled Radix Select. E2E tests verify full flow.
+      render(
+        <GuestDetailsForm
+          onSubmit={mockOnSubmit}
+          defaultValues={{ guestCount: 3 }}
+        />
+      )
+
+      // Verify display is correct - this confirms defaultValues prop works
+      expect(screen.getByRole('combobox')).toHaveTextContent('3 guests')
+    })
+
+    it('submits with special requests', async () => {
       const user = userEvent.setup()
       render(
         <GuestDetailsForm onSubmit={mockOnSubmit}>
@@ -499,765 +212,123 @@ describe('GuestDetailsForm', () => {
         </GuestDetailsForm>
       )
 
-      await user.type(screen.getByLabelText(/email/i), 'invalid-email')
-      await user.tab() // Trigger blur validation
-
-      await waitFor(() => {
-        // Zod schema error message: "Please enter a valid email address"
-        expect(screen.getByText(/valid email/i)).toBeInTheDocument()
-      })
-    })
-  })
-
-  // === T021a: OTP Entry State Tests [US4] ===
-
-  describe('OTP entry state (T021a)', () => {
-    beforeEach(() => {
-      setupAnonymousUser()
-    })
-
-    it('shows OTP input field when step is awaiting_otp', async () => {
-      const user = userEvent.setup()
-
-      // Setup: signIn returns awaiting OTP state
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Enter email and click verify
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      const verifyButton = screen.getByRole('button', { name: /verify email/i })
-      await user.click(verifyButton)
-
-      // Should show OTP input field
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-    })
-
-    it('shows confirm button when awaiting OTP', async () => {
-      const user = userEvent.setup()
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Should show confirm button
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /confirm|verify code|submit code/i })).toBeInTheDocument()
-      })
-    })
-
-    it('hides verify email button when awaiting OTP', async () => {
-      const user = userEvent.setup()
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Verify email button should be hidden
-      await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /verify email/i })).not.toBeInTheDocument()
-      })
-    })
-
-    it('displays email that code was sent to', async () => {
-      const user = userEvent.setup()
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Should show the email address
-      await waitFor(() => {
-        expect(screen.getByText(/test@example.com/)).toBeInTheDocument()
-      })
-    })
-
-    it('calls confirmOtp when confirm button is clicked with code', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Setup successful verification - note: getCurrentUser starts rejecting (anonymous)
-      // and we configure it to resolve AFTER confirmSignIn succeeds
-      mockConfirm.mockImplementation(async () => {
-        // After successful confirm, getCurrentUser should return the user
-        mockGetCurrentUser.mockResolvedValue({ userId: 'verified-sub-123' })
-        mockFetchAuthSession.mockResolvedValue({
-          tokens: {
-            idToken: {
-              payload: {
-                email: 'test@example.com',
-                name: 'Test User',
-              },
-            },
-          },
-        })
-        return { isSignedIn: true }
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input to appear and enter code
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '123456')
-
-      // Click confirm
-      const confirmButton = screen.getByRole('button', { name: /confirm|verify code|submit code/i })
-      await user.click(confirmButton)
-
-      // Should have called confirmSignIn
-      expect(mockConfirm).toHaveBeenCalledWith({ challengeResponse: '123456' })
-    })
-
-    it('shows verifying state with disabled button while confirming', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Create delayed promise for confirm
-      let resolveConfirm: (value: unknown) => void
-      mockConfirm.mockReturnValue(
-        new Promise((resolve) => {
-          resolveConfirm = resolve
-        })
+      // Enter special request
+      await user.type(
+        screen.getByPlaceholderText(/early check-in/i),
+        'Please arrange early check-in'
       )
 
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
+      // Submit
+      await user.click(screen.getByRole('button', { name: 'Submit' }))
 
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input and enter code
       await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '123456')
-
-      // Click confirm
-      const confirmButton = screen.getByRole('button', { name: /confirm|verify code|submit code/i })
-      await user.click(confirmButton)
-
-      // Should show verifying state
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /verifying/i })).toBeDisabled()
-      })
-
-      // Resolve the confirm
-      await act(async () => {
-        resolveConfirm!({ isSignedIn: true })
-      })
-    })
-
-    it('shows error message when code is invalid', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Setup failed verification
-      const codeMismatchError = new Error('Code mismatch')
-      codeMismatchError.name = 'CodeMismatchException'
-      mockConfirm.mockRejectedValue(codeMismatchError)
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input and enter code
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '000000')
-
-      // Click confirm
-      await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-      // Should show error message
-      await waitFor(() => {
-        expect(screen.getByText(/invalid code/i)).toBeInTheDocument()
-      })
-    })
-
-    it('shows resend link when code has expired', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Setup expired code error
-      const expiredError = new Error('Code expired')
-      expiredError.name = 'ExpiredCodeException'
-      mockConfirm.mockRejectedValue(expiredError)
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input and enter code
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '123456')
-
-      // Click confirm
-      await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-      // Should show expired message and resend link
-      await waitFor(() => {
-        expect(screen.getByText(/expired/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /resend|send new|request new/i })).toBeInTheDocument()
-      })
-    })
-
-    it('allows resending code when clicked', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Setup expired code error first
-      const expiredError = new Error('Code expired')
-      expiredError.name = 'ExpiredCodeException'
-      mockConfirm.mockRejectedValue(expiredError)
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input and enter code
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '123456')
-
-      // Click confirm to trigger error
-      await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-      // Wait for resend link
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /resend|send new|request new/i })).toBeInTheDocument()
-      })
-
-      // Clear previous call count
-      mockSignIn.mockClear()
-
-      // Click resend
-      await user.click(screen.getByRole('button', { name: /resend|send new|request new/i }))
-
-      // Should call signIn again
-      expect(mockSignIn).toHaveBeenCalledWith({
-        username: 'test@example.com',
-        options: {
-          authFlowType: 'USER_AUTH',
-          preferredChallenge: 'EMAIL_OTP',
-        },
-      })
-    })
-
-    it('transitions to authenticated state on successful verification', async () => {
-      const user = userEvent.setup()
-      const { confirmSignIn: mockConfirmSignIn } = await import('aws-amplify/auth')
-      const mockConfirm = mockConfirmSignIn as Mock
-
-      const mockSignIn = signIn as Mock
-      mockSignIn.mockResolvedValue({
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Setup successful verification - getCurrentUser starts rejecting (anonymous)
-      // and we configure it to resolve AFTER confirmSignIn succeeds
-      mockConfirm.mockImplementation(async () => {
-        // After successful confirm, getCurrentUser should return the user
-        mockGetCurrentUser.mockResolvedValue({ userId: 'verified-sub-123' })
-        mockFetchAuthSession.mockResolvedValue({
-          tokens: {
-            idToken: {
-              payload: {
-                email: 'test@example.com',
-                name: 'Verified User',
-              },
-            },
-          },
+        expect(mockOnSubmit).toHaveBeenCalled()
+        // react-hook-form passes (data, event) - check first argument
+        const [formData] = mockOnSubmit.mock.calls[0]
+        expect(formData).toEqual({
+          guestCount: 2,
+          specialRequests: 'Please arrange early check-in',
         })
-        return { isSignedIn: true }
-      })
-
-      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-      // Trigger OTP flow
-      const emailInput = screen.getByLabelText(/email/i)
-      await user.type(emailInput, 'test@example.com')
-      await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-      // Wait for OTP input and enter code
-      await waitFor(() => {
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-
-      const codeInput = screen.getByLabelText(/verification code|code/i)
-      await user.type(codeInput, '123456')
-
-      // Click confirm
-      await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-      // Should transition to authenticated state
-      await waitFor(() => {
-        expect(screen.getByText('test@example.com')).toBeInTheDocument()
-        expect(screen.getByText('Verified User')).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
       })
     })
+
   })
 
-  // =============================================================================
-  // T034: Error Type UI Rendering Tests (TDD Red Phase)
-  // =============================================================================
-
-  describe('error type UI rendering (T034)', () => {
-    // Define mocks at describe level for T034 tests
-    let mockSignIn: Mock
-    let mockConfirmSignIn: Mock
-    let user: ReturnType<typeof userEvent.setup>
-
-    beforeEach(() => {
-      // Setup anonymous user state
-      setupAnonymousUser()
-
-      // Setup user event helper
-      user = userEvent.setup()
-
-      // Create typed mock references
-      mockSignIn = signIn as Mock
-      mockConfirmSignIn = confirmSignIn as Mock
-
-      // Default: signIn returns OTP flow
-      mockSignIn.mockResolvedValue({
-        isSignedIn: false,
-        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-      })
-
-      // Default: confirmSignIn succeeds
-      mockConfirmSignIn.mockResolvedValue({
-        isSignedIn: true,
-        nextStep: { signInStep: 'DONE' },
-      })
-    })
-
-    describe('network error display', () => {
-      it('shows network error message with retry button', async () => {
-        const networkError = new Error('Network request failed')
-        networkError.name = 'NetworkError'
-        mockSignIn.mockRejectedValue(networkError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        // Should show network-specific error message
-        await waitFor(() => {
-          expect(
-            screen.getByText(/unable to connect/i)
-          ).toBeInTheDocument()
-        })
-
-        // Should show retry button (not resend code)
-        expect(
-          screen.getByRole('button', { name: /retry|try again/i })
-        ).toBeInTheDocument()
-      })
-
-      it('retry button clears error and allows new attempt', async () => {
-        const networkError = new Error('Network request failed')
-        networkError.name = 'NetworkError'
-        mockSignIn.mockRejectedValueOnce(networkError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(screen.getByText(/unable to connect/i)).toBeInTheDocument()
-        })
-
-        // Now mock successful response
-        mockSignIn.mockResolvedValueOnce({
-          isSignedIn: false,
-          nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
-        })
-
-        // Click retry
-        await user.click(screen.getByRole('button', { name: /retry|try again/i }))
-
-        // Error should be cleared
-        await waitFor(() => {
-          expect(screen.queryByText(/unable to connect/i)).not.toBeInTheDocument()
-        })
-      })
-
-      it('shows check internet connection suggestion for network errors', async () => {
-        mockSignIn.mockReset()  // Clear any leftover mock state from previous tests
-        const networkError = new TypeError('Failed to fetch')
-        mockSignIn.mockRejectedValue(networkError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(
-            screen.getByText(/check your internet connection/i)
-          ).toBeInTheDocument()
-        })
-      })
-    })
-
-    describe('auth error display', () => {
-      it('shows session expired message with sign-in link', async () => {
-        const authError = new Error('Session expired')
-        authError.name = 'TokenExpiredException'
-        mockConfirmSignIn.mockRejectedValue(authError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        // Get to OTP state
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-        })
-
-        // Enter OTP
-        const codeInput = screen.getByLabelText(/verification code|code/i)
-        await user.type(codeInput, '123456')
-        await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-        // Should show session expired message
-        await waitFor(() => {
-          expect(screen.getByText(/session expired/i)).toBeInTheDocument()
-        })
-
-        // Should have sign-in link/button
-        expect(
-          screen.getByRole('button', { name: /sign in again/i })
-        ).toBeInTheDocument()
-      })
-
-      it('CodeMismatchException shows invalid code with retry option', async () => {
-        const codeError = new Error('CodeMismatchException')
-        codeError.name = 'CodeMismatchException'
-        mockConfirmSignIn.mockRejectedValue(codeError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        // Get to OTP state
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-        })
-
-        // Enter wrong code
-        const codeInput = screen.getByLabelText(/verification code|code/i)
-        await user.type(codeInput, '000000')
-        await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-        // Should show invalid code message
-        await waitFor(() => {
-          expect(screen.getByText(/invalid code/i)).toBeInTheDocument()
-        })
-
-        // Code input should still be available for retry
-        expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-      })
-    })
-
-    describe('rate limit error display', () => {
-      it('shows rate limit message with wait indicator', async () => {
-        const limitError = new Error('LimitExceededException')
-        limitError.name = 'LimitExceededException'
-        mockConfirmSignIn.mockRejectedValue(limitError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        // Get to OTP state
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-        })
-
-        // Trigger rate limit
-        const codeInput = screen.getByLabelText(/verification code|code/i)
-        await user.type(codeInput, '123456')
-        await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-        // Should show rate limit message
-        await waitFor(() => {
-          expect(screen.getByText(/too many attempts/i)).toBeInTheDocument()
-        })
-
-        // Should indicate user needs to wait
-        expect(screen.getByText(/wait/i)).toBeInTheDocument()
-      })
-    })
-
-    describe('validation error display', () => {
-      it('shows validation error inline near field', async () => {
-        const validationError = new Error('Invalid email format')
-        validationError.name = 'InvalidParameterException'
-        mockSignIn.mockRejectedValue(validationError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'invalid-email')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        // Should show validation error
-        await waitFor(() => {
-          expect(screen.getByText(/invalid/i)).toBeInTheDocument()
-        })
-
-        // Email input should be highlighted or have error state
-        // This depends on implementation - could check aria-invalid
-        expect(emailInput).toBeInTheDocument()
-      })
-    })
-
-    describe('error styling by type', () => {
-      it('network errors have distinct visual style', async () => {
-        const networkError = new Error('Network request failed')
-        networkError.name = 'NetworkError'
-        mockSignIn.mockRejectedValue(networkError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          const errorContainer = screen.getByText(/unable to connect/i).closest('div')
-          // Network errors should have warning/amber styling, not red/destructive
-          expect(errorContainer).toHaveClass(/warning|amber|yellow/i)
-        })
-      })
-
-      it('auth errors have standard error styling', async () => {
-        const codeError = new Error('CodeMismatchException')
-        codeError.name = 'CodeMismatchException'
-        mockConfirmSignIn.mockRejectedValue(codeError)
-
-        render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
-
-        // Get to OTP state
-        const emailInput = screen.getByLabelText(/email/i)
-        await user.type(emailInput, 'test@example.com')
-        await user.click(screen.getByRole('button', { name: /verify email/i }))
-
-        await waitFor(() => {
-          expect(screen.getByLabelText(/verification code|code/i)).toBeInTheDocument()
-        })
-
-        const codeInput = screen.getByLabelText(/verification code|code/i)
-        await user.type(codeInput, '000000')
-        await user.click(screen.getByRole('button', { name: /confirm|verify code|submit code/i }))
-
-        await waitFor(() => {
-          const errorContainer = screen.getByText(/invalid code/i).closest('div')
-          // Auth errors use standard destructive/error styling
-          expect(errorContainer).toHaveClass(/destructive|error|red/i)
-        })
-      })
-    })
-  })
-
-  // =============================================================================
-  // T034: Error Boundary Tests (TDD Red Phase)
-  // =============================================================================
-
-  describe('error boundary (T034)', () => {
-    // Save original console.error to restore after tests
-    const originalConsoleError = console.error
-    let user: ReturnType<typeof userEvent.setup>
-
-    beforeEach(() => {
-      // Suppress error boundary console output in tests
-      console.error = vi.fn()
-      user = userEvent.setup()
-    })
-
-    afterEach(() => {
-      console.error = originalConsoleError
-    })
-
-    it('renders fallback UI when child component throws', () => {
-      // Create a component that throws
-      const ThrowingComponent = () => {
-        throw new Error('Unexpected render error')
-      }
-
+  // === onChange Callback Tests ===
+
+  describe('onChange callback', () => {
+    it('calls onChange when form field values change', async () => {
+      const user = userEvent.setup()
       render(
-        <AuthErrorBoundary>
-          <ThrowingComponent />
-        </AuthErrorBoundary>
+        <GuestDetailsForm onSubmit={mockOnSubmit} onChange={mockOnChange} />
       )
 
-      // Should show fallback UI, not crash
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
+      // Type in special requests field to trigger onChange
+      const textarea = screen.getByPlaceholderText(/early check-in/i)
+      await user.type(textarea, 'X')
+
+      // Verify onChange was called at least once after typing
+      expect(mockOnChange.mock.calls.length).toBeGreaterThan(0)
     })
 
-    it('shows retry option in fallback UI', () => {
-      const ThrowingComponent = () => {
-        throw new Error('Unexpected render error')
-      }
-
+    it('passes form values shape to onChange callback', async () => {
+      const user = userEvent.setup()
       render(
-        <AuthErrorBoundary>
-          <ThrowingComponent />
-        </AuthErrorBoundary>
+        <GuestDetailsForm onSubmit={mockOnSubmit} onChange={mockOnChange} />
       )
 
-      expect(
-        screen.getByRole('button', { name: /try again|retry|reload/i })
-      ).toBeInTheDocument()
+      // Type to trigger the onChange
+      await user.type(screen.getByPlaceholderText(/early check-in/i), 'A')
+
+      // Verify the callback received an object (form values)
+      const lastCall = mockOnChange.mock.calls[mockOnChange.mock.calls.length - 1]
+      expect(lastCall).toBeDefined()
+      expect(typeof lastCall[0]).toBe('object')
+    })
+  })
+
+  // === Disabled State Tests ===
+
+  describe('disabled state', () => {
+    it('disables dropdown when submitting', () => {
+      render(<GuestDetailsForm onSubmit={mockOnSubmit} isSubmitting={true} />)
+
+      expect(screen.getByRole('combobox')).toBeDisabled()
     })
 
-    it('allows recovery via retry button', async () => {
-      let shouldThrow = true
+    it('disables textarea when submitting', () => {
+      render(<GuestDetailsForm onSubmit={mockOnSubmit} isSubmitting={true} />)
 
-      const MaybeThrowingComponent = () => {
-        if (shouldThrow) {
-          throw new Error('Temporary error')
-        }
-        return <div>Recovered successfully</div>
-      }
+      expect(screen.getByPlaceholderText(/early check-in/i)).toBeDisabled()
+    })
+  })
 
-      const { rerender } = render(
-        <AuthErrorBoundary>
-          <MaybeThrowingComponent />
-        </AuthErrorBoundary>
+  // === Children Rendering Tests ===
+
+  describe('children slot', () => {
+    it('renders children (navigation buttons)', () => {
+      render(
+        <GuestDetailsForm onSubmit={mockOnSubmit}>
+          <button type="button">Back</button>
+          <button type="submit">Continue</button>
+        </GuestDetailsForm>
       )
 
-      // Should show error fallback
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
+    })
+  })
 
-      // Fix the error condition
-      shouldThrow = false
+  // === Accessibility Tests ===
 
-      // Click retry
-      await user.click(screen.getByRole('button', { name: /try again|retry|reload/i }))
+  describe('accessibility', () => {
+    it('has accessible labels for all fields', () => {
+      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
 
-      // Force rerender after retry
-      rerender(
-        <AuthErrorBoundary>
-          <MaybeThrowingComponent />
-        </AuthErrorBoundary>
-      )
+      // Guest count has label
+      expect(screen.getByText('Number of Guests')).toBeInTheDocument()
 
-      // Should recover
-      await waitFor(() => {
-        expect(screen.getByText(/recovered successfully/i)).toBeInTheDocument()
-      })
+      // Special requests has label
+      expect(screen.getByText('Special Requests (Optional)')).toBeInTheDocument()
     })
 
-    it('GuestDetailsForm is wrapped in error boundary', () => {
-      // This test verifies that GuestDetailsForm exports exist
-      // The wrapping happens at the usage site in pages/forms
-      expect(GuestDetailsForm).toBeDefined()
-      expect(AuthErrorBoundary).toBeDefined()
+    it('has description text for fields', () => {
+      render(<GuestDetailsForm onSubmit={mockOnSubmit} />)
+
+      expect(screen.getByText(/maximum 4 guests allowed/i)).toBeInTheDocument()
+      expect(screen.getByText(/let us know about any special requirements/i)).toBeInTheDocument()
+    })
+  })
+
+  // === Custom ClassName Tests ===
+
+  describe('custom styling', () => {
+    it('applies custom className to form', () => {
+      const { container } = render(
+        <GuestDetailsForm onSubmit={mockOnSubmit} className="custom-class" />
+      )
+
+      expect(container.querySelector('form')).toHaveClass('custom-class')
     })
   })
 })

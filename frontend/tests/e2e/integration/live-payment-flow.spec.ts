@@ -21,6 +21,8 @@
 
 import { test, expect } from '../fixtures/auth.fixture'
 import { addDays, format } from 'date-fns'
+import * as fs from 'fs'
+import * as path from 'path'
 
 // ============================================================================
 // Configuration
@@ -44,14 +46,59 @@ test.setTimeout(120000)
 // ============================================================================
 
 /**
+ * Get the authenticated user's email from the stored auth state.
+ * Decodes the JWT idToken to extract the email claim.
+ */
+function getAuthenticatedUserEmail(): string {
+  const authStatePath = path.join(__dirname, '..', '.auth-state', 'user.json')
+
+  try {
+    const authState = JSON.parse(fs.readFileSync(authStatePath, 'utf-8'))
+    const localStorage = authState.origins?.[0]?.localStorage || []
+
+    // Find the idToken in localStorage
+    const idTokenEntry = localStorage.find((entry: { name: string; value: string }) =>
+      entry.name.endsWith('.idToken')
+    )
+
+    if (idTokenEntry?.value) {
+      // JWT is base64url encoded: header.payload.signature
+      // We need the payload (second part)
+      const parts = idTokenEntry.value.split('.')
+      if (parts.length === 3) {
+        // Base64url decode the payload
+        const payload = Buffer.from(parts[1], 'base64').toString('utf-8')
+        const claims = JSON.parse(payload)
+        if (claims.email) {
+          return claims.email
+        }
+      }
+    }
+  } catch {
+    // Fall back to default if we can't read auth state
+  }
+
+  // Fallback to default test email
+  return 'test@example.com'
+}
+
+/**
  * Select a date in the booking calendar
  *
  * The calendar uses data-day={date.toLocaleDateString()} which produces
  * locale-specific formats. We use the same method for consistent matching.
  *
  * NOTE: This function will skip disabled dates and try to find the next available one.
+ * Returns the actual selected date (may differ from requested if fallback was used).
+ *
+ * @param minDate - For check-out selection, pass the check-in date to ensure check-out > check-in
  */
-async function selectDate(page: typeof test.prototype, date: Date, allowFallback = true) {
+async function selectDate(
+  page: typeof test.prototype,
+  date: Date,
+  options: { allowFallback?: boolean; minDate?: Date } = {}
+): Promise<Date> {
+  const { allowFallback = true, minDate } = options
   // Match the format used by the calendar component (toLocaleDateString())
   const dateStr = date.toLocaleDateString()
   const readableDateStr = format(date, 'yyyy-MM-dd') // For error messages
@@ -69,20 +116,38 @@ async function selectDate(page: typeof test.prototype, date: Date, allowFallback
       const isDisabled = await dayButton.isDisabled()
       if (!isDisabled) {
         await dayButton.click()
-        return
+        return date // Return the requested date since it was available
       }
 
-      // If disabled and fallback allowed, try to find next available date in the same month
+      // If disabled and fallback allowed, try to find next available date
       if (allowFallback) {
         // Find all enabled day buttons in the current calendar view
         const enabledDays = page.locator('[data-slot="calendar"] button[data-day]:not([disabled])')
         const count = await enabledDays.count()
 
-        if (count > 0) {
-          // Click the first available day
-          await enabledDays.first().click()
-          return
+        // Find first available day that meets our constraints
+        for (let i = 0; i < count; i++) {
+          const dayBtn = enabledDays.nth(i)
+          const dayDateStr = await dayBtn.getAttribute('data-day')
+          const dayDate = new Date(dayDateStr!)
+
+          // Skip dates BEFORE the requested date (fallback must not go backwards)
+          // This prevents selecting early dates that may have existing reservations
+          if (dayDate < date) {
+            continue
+          }
+
+          // Skip dates on or before minDate (for check-out, must be after check-in + nights - 1)
+          if (minDate && dayDate <= minDate) {
+            continue
+          }
+
+          await dayBtn.click()
+          console.log(`[selectDate] Fallback: requested ${readableDateStr}, selected ${format(dayDate, 'yyyy-MM-dd')}${minDate ? ` (minDate: ${format(minDate, 'yyyy-MM-dd')})` : ''}`)
+          return dayDate
         }
+
+        // No valid date in this view, continue to next month
       }
     }
 
@@ -102,11 +167,31 @@ async function selectDate(page: typeof test.prototype, date: Date, allowFallback
   )
 }
 
-/** Counter for generating unique date ranges per test (per worker) */
-let testDateOffset = 0
+/**
+ * Counter for generating unique date ranges per test within each worker.
+ *
+ * Date allocation strategy (relies on --e2e-mode clearing all reservations):
+ * - Base offset: 60 days from today (safe future date)
+ * - Worker offset: 70 days per worker (allows 10 tests × 7 nights each)
+ * - Test offset: 7 days per test within worker
+ *
+ * Example with 4 workers:
+ * - Worker 0: days 60-129 (tests 0-9)
+ * - Worker 1: days 130-199 (tests 0-9)
+ * - Worker 2: days 200-269 (tests 0-9)
+ * - Worker 3: days 270-339 (tests 0-9)
+ *
+ * Since `task frontend:test:e2e:live:payment` runs `seed:dev --e2e-mode` first,
+ * ALL dates are available at test start. No retry logic needed.
+ */
+let testIndex = 0
 
 /**
- * Complete the booking form up to the payment step
+ * Complete the booking form up to the payment step.
+ *
+ * Date selection is deterministic - each test gets its own 7-day window.
+ * Requires running via `task frontend:test:e2e:live:payment` which clears
+ * all reservations before running tests.
  */
 async function completeBookingFormUpToPayment(
   page: typeof test.prototype,
@@ -116,85 +201,61 @@ async function completeBookingFormUpToPayment(
     guestName?: string
     guestEmail?: string
     guestPhone?: string
-    /** Days from today to start booking (default: auto-incremented per test) */
+    /** Days from today to start booking (default: auto-calculated per test) */
     startOffset?: number
     /** Number of nights to book (default: 7) */
     nights?: number
-    /** Playwright worker index for parallel test isolation */
+    /** Playwright worker index for date range isolation */
     workerIndex?: number
   } = {}
 ) {
-  // Dynamic dates: Use unique date ranges per test to avoid conflicts
-  // Base offset of 30 days ensures dates are in the future
-  // Each worker gets its own date range: worker 0 starts at day 30, worker 1 at day 130, etc.
-  // Within each worker, tests increment by nights + 7 buffer days
-  // IMPORTANT: Must stay within 2-year (730-day) seeded availability window
-  //
-  // Math: Serial blocks have up to 5 tests, each using 14 days (7 nights + 7 buffer)
-  // Max range per worker = 5 * 14 = 70 days, so workerOffset >= 100 prevents overlap
-  // With 6 workers: max day = 30 + 500 + 70 = 600, well within 730-day window
   const nights = options.nights ?? 7
-  const baseOffset = 30
-  const workerIndex = options.workerIndex ?? 0
-  const workerOffset = workerIndex * 100 // 100 days between workers to prevent overlap (6 workers = 600 max)
-
-  // Calculate unique date range for this test invocation
-  const startOffset = options.startOffset ?? baseOffset + workerOffset + testDateOffset
-  testDateOffset += nights + 7 // Reserve nights + buffer for next test in this worker
-
-  const checkIn = options.checkIn ?? addDays(new Date(), startOffset)
-  const checkOut = options.checkOut ?? addDays(checkIn, nights)
   const guestName = options.guestName ?? 'Automated Test User'
-  const guestEmail = options.guestEmail ?? process.env.E2E_TEST_USER_EMAIL ?? 'test@example.com'
-  const guestPhone = options.guestPhone ?? '+34 600 123 456'
+  // For authenticated users, get email from JWT in auth state (matches what's shown on payment page)
+  const guestEmail = options.guestEmail ?? process.env.E2E_TEST_USER_EMAIL ?? getAuthenticatedUserEmail()
+  const workerIndex = options.workerIndex ?? 0
+
+  // Each worker gets 70 days (10 tests × 7 nights), each test gets 7 days
+  // Worker 0: 60-129, Worker 1: 130-199, Worker 2: 200-269, etc.
+  const currentTestIndex = testIndex++
+  const workerOffset = workerIndex * 70
+  const testOffset = currentTestIndex * 7
+  const startOffset = options.startOffset ?? 60 + workerOffset + testOffset
+
+  console.log(`[DateCalc] worker=${workerIndex}, test=${currentTestIndex}, offset=${startOffset} (days ${startOffset}-${startOffset + nights - 1})`)
+
+  const requestedCheckIn = options.checkIn ?? addDays(new Date(), startOffset)
 
   // Navigate to booking page
   await page.goto('/book')
   await page.waitForLoadState('networkidle')
 
   // Step 1: Select dates
+  // IMPORTANT: selectDate may fallback to a different date if requested is unavailable
+  // We must calculate check-out based on the ACTUAL selected check-in, not the requested one
   await expect(page.locator('[data-slot="calendar"]').first()).toBeVisible({ timeout: 10000 })
 
-  await selectDate(page, checkIn)
-  await selectDate(page, checkOut)
+  const checkIn = await selectDate(page, requestedCheckIn)
+  const checkOut = options.checkOut ?? addDays(checkIn, nights)
+  // Pass minDate to ensure check-out fallback maintains the intended stay duration
+  // minDate = checkIn + (nights - 1) ensures any fallback date is >= nights away from check-in
+  // This is crucial for seasonal minimum stay requirements (e.g., 5 nights in Mid Season)
+  const minCheckOutDate = addDays(checkIn, nights - 1)
+  await selectDate(page, checkOut, { minDate: minCheckOutDate })
 
   // Verify date selection shows nights
   await expect(page.getByText(/night/i)).toBeVisible({ timeout: 10000 })
 
-  // Continue to guest details
-  await page.getByRole('button', { name: /continue to guest details/i }).click()
+  // Continue to auth step (new flow: dates -> auth -> guest -> payment)
+  await page.getByRole('button', { name: /^continue$/i }).click()
 
-  // Step 2: Fill guest details
-  await expect(page.getByText('Guest Details')).toBeVisible({ timeout: 10000 })
+  // Step 2: Auth step - for authenticated users, this auto-completes
+  // Wait for either AuthStep (if not auto-completing) or Guest Details (if auto-completed)
+  // Give the auth step time to detect existing session and auto-advance
+  await expect(page.getByText('Guest Details')).toBeVisible({ timeout: 30000 })
 
-  // For authenticated users, name and email fields are pre-filled and disabled
-  // Only fill fields that are not disabled
-  const nameInput = page.getByLabel(/name/i)
-  const emailInput = page.getByLabel(/email/i)
-  const phoneInput = page.getByLabel(/phone/i)
-
-  // Track actual values used (from profile or filled in)
-  let actualGuestName = guestName
-  let actualGuestEmail = guestEmail
-
-  // Check if name field is editable (not disabled)
-  if (!(await nameInput.isDisabled())) {
-    await nameInput.fill(guestName)
-  } else {
-    // Get the pre-filled value from the authenticated user's profile
-    actualGuestName = (await nameInput.inputValue()) || guestName
-  }
-
-  // Check if email field is editable (not disabled)
-  if (!(await emailInput.isDisabled())) {
-    await emailInput.fill(guestEmail)
-  } else {
-    // Get the pre-filled value from the authenticated user's profile
-    actualGuestEmail = (await emailInput.inputValue()) || guestEmail
-  }
-
-  // Phone is always editable - fill it
-  await phoneInput.fill(guestPhone)
+  // Step 3: Fill simplified guest details (only guest count and special requests)
+  // Name, email, phone are now collected in AuthStep which auto-completed for authenticated users
 
   // Continue to payment - this triggers a reservation API call
   const continueButton = page.getByRole('button', { name: /continue to payment/i })
@@ -287,7 +348,8 @@ async function completeBookingFormUpToPayment(
   // Verify we're on the payment step
   await expect(paymentStep).toBeVisible({ timeout: 5000 })
 
-  return { checkIn, checkOut, guestName: actualGuestName, guestEmail: actualGuestEmail }
+  // Return the booking details - guestName/guestEmail now come from AuthStep (pre-filled for authenticated users)
+  return { checkIn, checkOut, guestName, guestEmail }
 }
 
 // ============================================================================
@@ -382,16 +444,16 @@ test.describe('Live Payment Flow - Authenticated', () => {
   })
 
   test('can navigate back from payment step to guest details', async ({ authenticatedPage }, testInfo) => {
-    const { guestName } = await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
+    await completeBookingFormUpToPayment(authenticatedPage, { workerIndex: testInfo.workerIndex })
 
     // Click back button
     await authenticatedPage.getByRole('button', { name: /back/i }).click()
 
-    // Should be back on guest details
+    // Should be back on guest details (simplified form: guest count + special requests only)
     await expect(authenticatedPage.getByText('Guest Details')).toBeVisible({ timeout: 5000 })
 
-    // Form data should be preserved (use actual name from authenticated user)
-    await expect(authenticatedPage.getByLabel(/name/i)).toHaveValue(guestName)
+    // Verify guest count dropdown is visible (name/email/phone now in AuthStep)
+    await expect(authenticatedPage.getByText('Number of Guests')).toBeVisible()
   })
 
   test('payment step displays correct booking summary', async ({ authenticatedPage }, testInfo) => {
@@ -533,23 +595,15 @@ test.describe('Live Payment Flow - Error Scenarios', () => {
     await selectDate(authenticatedPage, checkOut)
 
     await expect(authenticatedPage.getByText(/night/i)).toBeVisible({ timeout: 10000 })
-    await authenticatedPage.getByRole('button', { name: /continue to guest details/i }).click()
 
-    await expect(authenticatedPage.getByText('Guest Details')).toBeVisible()
+    // New flow: dates -> auth -> guest details -> payment
+    await authenticatedPage.getByRole('button', { name: /^continue$/i }).click()
 
-    // For authenticated users, name and email fields are pre-filled and disabled
-    const nameInput = authenticatedPage.getByLabel(/name/i)
-    const emailInput = authenticatedPage.getByLabel(/email/i)
-    const phoneInput = authenticatedPage.getByLabel(/phone/i)
+    // Auth step auto-completes for authenticated users
+    // Wait for Guest Details to appear (name/email/phone are now in AuthStep which auto-completed)
+    await expect(authenticatedPage.getByText('Guest Details')).toBeVisible({ timeout: 30000 })
 
-    if (!(await nameInput.isDisabled())) {
-      await nameInput.fill('Error Test User')
-    }
-    if (!(await emailInput.isDisabled())) {
-      await emailInput.fill('error@test.com')
-    }
-    await phoneInput.fill('+34 600 000 000')
-
+    // Guest Details now only has guest count + special requests
     await authenticatedPage.getByRole('button', { name: /continue to payment/i }).click()
 
     // Should show error state (use first() to handle multiple matching elements)

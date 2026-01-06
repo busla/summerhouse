@@ -183,20 +183,24 @@ test.describe('Form Persistence (T004)', () => {
       await availableDays.nth(4).click()
     }
 
-    // Step 2: Proceed to guest details (if multi-step form)
-    const nextButton = page.getByRole('button', { name: /continue to guest/i })
+    // Step 2: Proceed to auth step (4-step flow: dates → auth → guest → payment)
+    const nextButton = page.getByRole('button', { name: /continue/i })
     await expect(nextButton).toBeEnabled({ timeout: 5000 })
     await nextButton.click()
     await page.waitForLoadState('networkidle')
 
-    // Step 3: Fill in guest details
-    // The GuestDetailsForm has specific input fields
-    const nameInput = page.getByLabel(/full name/i).or(page.locator('input[name="name"]'))
-    const emailInput = page.getByLabel(/email/i).or(page.locator('input[name="email"]'))
+    // Step 3: Fill in auth step fields (identity verification)
+    // The AuthStep component has name/email/phone fields with "Verify Identity" card title
+    await expect(page.getByText('Verify Identity')).toBeVisible({ timeout: 5000 })
+
+    const nameInput = page.getByLabel(/full name/i)
+    const emailInput = page.getByLabel(/email address/i)
+    const phoneInput = page.getByLabel(/phone number/i)
 
     // Fill form fields
     await nameInput.fill('John Test User')
     await emailInput.fill('john.test@example.com')
+    await phoneInput.fill('+34 612 345 678')
 
     // Give form time to save to sessionStorage
     await page.waitForTimeout(500)
@@ -212,8 +216,8 @@ test.describe('Form Persistence (T004)', () => {
     await page.waitForLoadState('domcontentloaded')
 
     // Wait for the form to be rendered with restored step
-    // The page should restore to Guest Details step with dates visible
-    await expect(page.getByText('Guest Details')).toBeVisible({ timeout: 10000 })
+    // The page should restore to Auth step ("Verify Identity")
+    await expect(page.getByText('Verify Identity')).toBeVisible({ timeout: 10000 })
 
     // Verify form data was restored
     const restoredData = await page.evaluate((key) => sessionStorage.getItem(key), STORAGE_KEY)
@@ -222,26 +226,39 @@ test.describe('Form Persistence (T004)', () => {
     // Parse and verify the restored data contains our input
     if (restoredData) {
       const parsed = JSON.parse(restoredData)
-      // The exact structure depends on implementation, but should contain our data
+      // The form state should contain customerName, customerEmail, customerPhone
       expect(parsed).toBeDefined()
+      expect(parsed.customerName).toBe('John Test User')
+      expect(parsed.customerEmail).toBe('john.test@example.com')
+      expect(parsed.customerPhone).toBe('+34 612 345 678')
     }
 
-    // After refresh with form persistence hook, should restore to guest details step
+    // After refresh with form persistence hook, should restore to auth step
     // and name field should have the stored value
     await expect(nameInput).toHaveValue('John Test User', { timeout: 10000 })
   })
 
   test('form data is cleared after successful booking submission', async ({ page }) => {
-    // Pre-populate sessionStorage with test data
+    // Pre-populate sessionStorage with test data (new 4-step flow structure)
     await page.evaluate((key) => {
       sessionStorage.setItem(key, JSON.stringify({
-        dates: { from: '2026-02-15', to: '2026-02-20' },
+        selectedRange: { from: '2026-02-15', to: '2026-02-20' },
+        // Auth step fields (new structure per FR-002)
+        customerName: 'Test User',
+        customerEmail: 'test@example.com',
+        customerPhone: '+34 612 345 678',
+        authStep: 'authenticated',
+        customerId: 'test-customer-123',
+        // Simplified guest details (only guestCount + specialRequests per FR-018)
         guestDetails: {
-          name: 'Test User',
-          email: 'test@example.com',
           guestCount: 2,
+          specialRequests: '',
         },
         currentStep: 'confirmation',
+        reservationId: null,
+        paymentAttempts: 0,
+        lastPaymentError: null,
+        stripeSessionId: null,
       }))
     }, STORAGE_KEY)
 

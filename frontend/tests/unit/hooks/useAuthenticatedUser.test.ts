@@ -18,6 +18,8 @@ vi.mock('aws-amplify/auth', () => ({
   signIn: vi.fn(),
   signUp: vi.fn(),
   confirmSignIn: vi.fn(),
+  confirmSignUp: vi.fn(),
+  autoSignIn: vi.fn(),
   signOut: vi.fn(),
 }))
 
@@ -28,6 +30,8 @@ import {
   signIn,
   signUp,
   confirmSignIn,
+  confirmSignUp,
+  autoSignIn,
   signOut as amplifySignOut,
 } from 'aws-amplify/auth'
 
@@ -45,6 +49,8 @@ const mockFetchAuthSession = fetchAuthSession as Mock
 const mockSignIn = signIn as Mock
 const mockSignUp = signUp as Mock
 const mockConfirmSignIn = confirmSignIn as Mock
+const mockConfirmSignUp = confirmSignUp as Mock
+const mockAutoSignIn = autoSignIn as Mock
 const mockAmplifySignOut = amplifySignOut as Mock
 
 describe('useAuthenticatedUser', () => {
@@ -867,6 +873,411 @@ describe('useAuthenticatedUser', () => {
       await waitFor(() => {
         expect(result.current.error).toBeNull()
       })
+    })
+  })
+
+  // =============================================================================
+  // T041: confirmOtp() for NEW users (confirmSignUp + autoSignIn flow)
+  // =============================================================================
+  //
+  // When a new user initiates auth, signIn throws UserNotFoundException, which
+  // triggers signUp. The hook sets isNewUserFlow.current = true.
+  // When confirmOtp is called for a new user, it should call confirmSignUp
+  // (NOT confirmSignIn) followed by autoSignIn.
+  // =============================================================================
+
+  describe('confirmOtp() for new users', () => {
+    beforeEach(() => {
+      // Setup: signIn fails with UserNotFoundException (new user)
+      // signUp succeeds and transitions to awaiting_otp
+      const userNotFoundError = new Error('User does not exist')
+      userNotFoundError.name = 'UserNotFoundException'
+      mockSignIn.mockRejectedValue(userNotFoundError)
+      mockSignUp.mockResolvedValue({
+        isSignUpComplete: false,
+        nextStep: { signUpStep: 'CONFIRM_SIGN_UP' },
+      })
+    })
+
+    it('calls confirmSignUp (not confirmSignIn) with email and code', async () => {
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+      })
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com', name: 'New User' },
+          },
+        },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      // Initiate auth for new user (triggers signUp flow)
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      expect(result.current.step).toBe('awaiting_otp')
+
+      // Confirm OTP for new user
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      // Should call confirmSignUp with username and code
+      expect(mockConfirmSignUp).toHaveBeenCalledWith({
+        username: 'newuser@example.com',
+        confirmationCode: '123456',
+      })
+
+      // Should NOT call confirmSignIn for new users
+      expect(mockConfirmSignIn).not.toHaveBeenCalled()
+    })
+
+    it('calls autoSignIn after successful confirmSignUp', async () => {
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+      })
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com' },
+          },
+        },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      // autoSignIn should be called after confirmSignUp
+      expect(mockAutoSignIn).toHaveBeenCalled()
+    })
+
+    it('transitions to authenticated state after successful confirmSignUp + autoSignIn', async () => {
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+      })
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub-123',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com', name: 'New User' },
+          },
+        },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      await waitFor(() => {
+        expect(result.current.step).toBe('authenticated')
+      })
+
+      expect(result.current.user).toEqual({
+        email: 'newuser@example.com',
+        name: 'New User',
+        sub: 'new-user-sub-123',
+      })
+      expect(result.current.error).toBeNull()
+    })
+
+    it('handles confirmSignUp isSignUpComplete without COMPLETE_AUTO_SIGN_IN step', async () => {
+      // Some Cognito configs may return isSignUpComplete=true without COMPLETE_AUTO_SIGN_IN
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'DONE' }, // Alternative step name
+      })
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com' },
+          },
+        },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      // Should still call autoSignIn and complete authentication
+      await waitFor(() => {
+        expect(result.current.step).toBe('authenticated')
+      })
+    })
+
+    it('handles CodeMismatchException during confirmSignUp', async () => {
+      const codeMismatchError = new Error('Invalid verification code')
+      codeMismatchError.name = 'CodeMismatchException'
+      mockConfirmSignUp.mockRejectedValue(codeMismatchError)
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('wrong-code')
+      })
+
+      // Should return to awaiting_otp to allow retry
+      expect(result.current.step).toBe('awaiting_otp')
+      expect(result.current.error).toBe('Invalid code. Please try again.')
+      expect(result.current.errorType).toBe('auth')
+    })
+
+    it('handles ExpiredCodeException during confirmSignUp', async () => {
+      const expiredError = new Error('Code has expired')
+      expiredError.name = 'ExpiredCodeException'
+      mockConfirmSignUp.mockRejectedValue(expiredError)
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('expired-code')
+      })
+
+      expect(result.current.step).toBe('awaiting_otp')
+      expect(result.current.error).toBe('Code expired. Please request a new one.')
+      expect(result.current.errorType).toBe('auth')
+    })
+
+    it('handles autoSignIn failure after successful confirmSignUp', async () => {
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+      })
+      // autoSignIn fails
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: false,
+        nextStep: { signInStep: 'SOME_UNEXPECTED_STEP' },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      // Should return to anonymous with helpful message
+      expect(result.current.step).toBe('anonymous')
+      expect(result.current.error).toBe('Please sign in to complete registration.')
+    })
+
+    it('handles network error during confirmSignUp', async () => {
+      const networkError = new Error('Network error')
+      networkError.name = 'NetworkError'
+      mockConfirmSignUp.mockRejectedValue(networkError)
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      expect(result.current.step).toBe('awaiting_otp')
+      expect(result.current.error).toBe(
+        'Unable to connect. Please check your internet connection.'
+      )
+      expect(result.current.errorType).toBe('network')
+    })
+
+    it('transitions through verifying state during confirmation', async () => {
+      // Create a delayed promise to observe intermediate state
+      let resolveConfirmSignUp: (value: unknown) => void
+      mockConfirmSignUp.mockReturnValue(
+        new Promise((resolve) => {
+          resolveConfirmSignUp = resolve
+        })
+      )
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+
+      expect(result.current.step).toBe('awaiting_otp')
+
+      // Start OTP confirmation - don't await yet
+      act(() => {
+        result.current.confirmOtp('123456')
+      })
+
+      // Should be in verifying state
+      expect(result.current.step).toBe('verifying')
+
+      // Complete the confirmation
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com' },
+          },
+        },
+      })
+
+      await act(async () => {
+        resolveConfirmSignUp!({
+          isSignUpComplete: true,
+          nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+        })
+      })
+
+      await waitFor(() => {
+        expect(result.current.step).toBe('authenticated')
+      })
+    })
+
+    it('resets isNewUserFlow after successful authentication', async () => {
+      mockConfirmSignUp.mockResolvedValue({
+        isSignUpComplete: true,
+        nextStep: { signUpStep: 'COMPLETE_AUTO_SIGN_IN' },
+      })
+      mockAutoSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'new-user-sub',
+        username: 'newuser@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'newuser@example.com' },
+          },
+        },
+      })
+
+      const { result } = renderHook(() => useAuthenticatedUser())
+
+      // First: new user flow
+      await act(async () => {
+        await result.current.initiateAuth('newuser@example.com')
+      })
+      await act(async () => {
+        await result.current.confirmOtp('123456')
+      })
+
+      await waitFor(() => {
+        expect(result.current.step).toBe('authenticated')
+      })
+
+      // Sign out
+      await act(async () => {
+        await result.current.signOut()
+      })
+
+      expect(result.current.step).toBe('anonymous')
+
+      // Now: existing user flow (reset signIn to succeed)
+      vi.clearAllMocks()
+      mockSignIn.mockResolvedValue({
+        nextStep: { signInStep: 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE' },
+      })
+      mockConfirmSignIn.mockResolvedValue({
+        isSignedIn: true,
+        nextStep: { signInStep: 'DONE' },
+      })
+      mockGetCurrentUser.mockResolvedValue({
+        userId: 'existing-user-sub',
+        username: 'existing@example.com',
+      })
+      mockFetchAuthSession.mockResolvedValue({
+        tokens: {
+          idToken: {
+            payload: { email: 'existing@example.com' },
+          },
+        },
+      })
+
+      await act(async () => {
+        await result.current.initiateAuth('existing@example.com')
+      })
+      await act(async () => {
+        await result.current.confirmOtp('654321')
+      })
+
+      // Should use confirmSignIn (not confirmSignUp) for existing user
+      expect(mockConfirmSignIn).toHaveBeenCalledWith({
+        challengeResponse: '654321',
+      })
+      expect(mockConfirmSignUp).not.toHaveBeenCalled()
     })
   })
 
