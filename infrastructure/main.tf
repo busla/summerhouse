@@ -430,6 +430,42 @@ resource "aws_iam_role_policy_attachment" "agentcore_cognito" {
 }
 
 # -----------------------------------------------------------------------------
+# OTP Interceptor Lambda (E2E Testing) - Custom Email Sender Trigger
+# -----------------------------------------------------------------------------
+# Uses Cognito's Custom Email Sender trigger to intercept ACTUAL OTP codes.
+# (Note: Custom Message trigger only receives {####} placeholder - NOT actual codes)
+#
+# Custom Email Sender flow:
+# 1. Cognito encrypts OTP code with KMS key
+# 2. Lambda decrypts with AWS Encryption SDK
+# 3. For test emails in dev: stores code in DynamoDB for E2E retrieval
+# 4. For ALL emails: sends via SES (Custom Email Sender takes over email delivery)
+#
+# Only enabled in dev via var.enable_otp_interceptor.
+
+module "otp_interceptor" {
+  source = "./modules/otp-interceptor"
+  count  = var.enable_otp_interceptor ? 1 : 0
+
+  # Pass CloudPosse context
+  context = module.label.context
+
+  # Lambda source
+  lambda_source_path = "${path.module}/../backend/lambdas/otp-interceptor"
+
+  # DynamoDB table for storing intercepted OTPs
+  verification_codes_table_name = module.dynamodb.verification_codes_table_name
+  verification_codes_table_arn  = module.dynamodb.verification_codes_table_arn
+
+  # SES configuration for sending emails (Custom Email Sender takes over ALL email delivery)
+  ses_from_email = var.ses_from_email
+  ses_identity   = var.ses_email_identity
+
+  # Note: cognito_user_pool_arn intentionally omitted here to break dependency cycle
+  # Lambda permission is created in cognito module after both modules exist
+}
+
+# -----------------------------------------------------------------------------
 # Cognito Passwordless Authentication
 # -----------------------------------------------------------------------------
 
@@ -448,6 +484,14 @@ module "cognito" {
 
   # Enable password auth for E2E test automation (allows test users to bypass OTP)
   enable_user_password_auth = var.enable_cognito_password_auth
+
+  # OTP Interceptor Lambda for E2E test automation (Custom Email Sender)
+  # When enabled, Cognito invokes this Lambda which:
+  # 1. Receives encrypted OTP codes (decrypts with KMS)
+  # 2. Stores codes in DynamoDB for test email patterns (E2E retrieval)
+  # 3. Sends ALL emails via SES (Custom Email Sender takes over email delivery)
+  custom_email_sender_lambda_arn  = var.enable_otp_interceptor ? module.otp_interceptor[0].lambda_function_arn : null
+  custom_email_sender_kms_key_arn = var.enable_otp_interceptor ? module.otp_interceptor[0].kms_key_arn : null
 
   # SES email configuration (optional)
   # When set, Cognito uses your SES identity instead of default email service
@@ -468,6 +512,9 @@ module "cognito" {
   ] : []
 }
 
+# Note: Lambda permission for OTP Interceptor is created inside the cognito-passwordless
+# module when custom_email_sender_lambda_arn is provided. This avoids dependency cycles
+# since the cognito module creates the User Pool and can immediately grant invoke permission.
 
 # -----------------------------------------------------------------------------
 # Identity Pool IAM Policy for AgentCore Invocation
@@ -536,7 +583,7 @@ module "static_website" {
   enable_waf = true
   waf_whitelisted_ips = [
     { ip = "157.157.199.250/32", description = "Hlíð" },
-    { ip = "2a01:6f01:b401:9100:d089:e336:6756:f842/128", description = "Kleppsvegur" },
+    { ip = "2a01:6f01:b401:9100:4126:2c2a:66b3:293d/128", description = "Kleppsvegur" },
     { ip = "213.181.116.102/32", description = "Apró" },
     { ip = "46.22.109.167/32", description = "Kaffi Laugalækur" }
   ]

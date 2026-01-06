@@ -313,11 +313,26 @@ export function useAuthenticatedUser(): UseAuthenticatedUserReturn {
         // Cognito is asking us to select an auth factor
         // This can happen when there's incomplete auth state or preferredChallenge wasn't applied
         const availableChallenges = (nextStep as { availableChallenges?: string[] }).availableChallenges
-        console.info('[auth] available challenges:', availableChallenges)
+        console.info('[auth] FACTOR_SELECTION received, availableChallenges:', JSON.stringify(availableChallenges))
 
-        // Always attempt EMAIL_OTP selection - let Cognito reject if invalid
-        // Don't preemptively block based on availableChallenges which may be stale
-        console.debug('[auth] selecting EMAIL_OTP factor')
+        // IMPORTANT: Empty availableChallenges or missing EMAIL_OTP indicates user doesn't exist
+        // (Cognito returns this instead of UserNotFoundException when prevent_user_existence_errors is enabled)
+        // Use case-insensitive check since Cognito may return different cases
+        const hasEmailOtp = availableChallenges?.some(
+          (c) => c.toUpperCase() === 'EMAIL_OTP'
+        )
+        console.info('[auth] hasEmailOtp:', hasEmailOtp, 'length:', availableChallenges?.length)
+
+        if (!availableChallenges || availableChallenges.length === 0 || !hasEmailOtp) {
+          console.info('[auth] EMAIL_OTP not available - falling back to signUp flow')
+          // Simulate UserNotFoundException to trigger signUp flow
+          const userNotFoundError = new Error('User does not exist.')
+          userNotFoundError.name = 'UserNotFoundException'
+          throw userNotFoundError
+        }
+
+        // User exists with EMAIL_OTP available - select it
+        console.info('[auth] selecting EMAIL_OTP factor for existing user')
         const selectResult = await confirmSignIn({ challengeResponse: 'EMAIL_OTP' })
 
         if (selectResult.nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE') {

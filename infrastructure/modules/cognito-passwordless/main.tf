@@ -109,8 +109,20 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
-  # No Lambda triggers - native EMAIL_OTP handles everything
-  # Users are created via admin_create_user with email_verified=true
+  # Lambda triggers - Custom Email Sender for OTP interception in dev (E2E testing)
+  # Custom Email Sender receives ENCRYPTED actual OTP codes (not placeholders)
+  # The Lambda decrypts with KMS, stores codes for tests, and sends emails via SES
+  # IMPORTANT: Custom Email Sender takes over ALL email delivery from Cognito
+  dynamic "lambda_config" {
+    for_each = var.custom_email_sender_lambda_arn != null ? [1] : []
+    content {
+      custom_email_sender {
+        lambda_arn     = var.custom_email_sender_lambda_arn
+        lambda_version = "V1_0"
+      }
+      kms_key_id = var.custom_email_sender_kms_key_arn
+    }
+  }
 
   # Account recovery via email
   account_recovery_setting {
@@ -369,4 +381,20 @@ resource "aws_cognito_identity_pool_roles_attachment" "main" {
 resource "aws_cognito_user_pool_domain" "main" {
   domain       = module.label.id # e.g., "booking-dev-auth"
   user_pool_id = aws_cognito_user_pool.main.id
+}
+
+# -----------------------------------------------------------------------------
+# Lambda Permission for Custom Email Sender
+# -----------------------------------------------------------------------------
+# Allow Cognito to invoke the Custom Email Sender Lambda function.
+# This is created only when the Custom Email Sender is configured.
+
+resource "aws_lambda_permission" "cognito_custom_email_sender" {
+  count = var.custom_email_sender_lambda_arn != null ? 1 : 0
+
+  statement_id  = "AllowCognitoCustomEmailSender"
+  action        = "lambda:InvokeFunction"
+  function_name = var.custom_email_sender_lambda_arn
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = aws_cognito_user_pool.main.arn
 }

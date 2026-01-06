@@ -194,7 +194,7 @@ test.describe('Auth Step - OTP Flow', () => {
     // Wait for OTP UI
     await expect(page.getByLabel(/verification code|code/i)).toBeVisible({ timeout: 10000 })
 
-    // Should have 6 input slots (shadcn InputOTPSlot components)
+    // Should have 6 input slots (Cognito EMAIL_OTP sends 6-digit codes)
     const otpSlots = page.locator('[data-slot="otp-slot"]')
     await expect(otpSlots).toHaveCount(6)
   })
@@ -402,5 +402,46 @@ test.describe('Auth Step - Accessibility', () => {
     const nameInput = page.getByLabel(/full name/i)
     const errorId = await nameInput.getAttribute('aria-describedby')
     expect(errorId).toBeTruthy()
+  })
+})
+
+// === New User SignUp Flow Tests ===
+// Tests the critical path when a user doesn't exist in Cognito.
+// With prevent_user_existence_errors enabled, Cognito returns
+// CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION with empty/no challenges
+// instead of UserNotFoundException. The code must detect this and
+// fall back to signUp flow.
+
+test.describe('Auth Step - New User Flow', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/book')
+    await page.waitForSelector('[data-slot="calendar"]')
+    await completeDateSelectionStep(page)
+  })
+
+  test('new user with non-existent email reaches OTP view via signUp flow', async ({ page }) => {
+    // Generate a truly random email that doesn't exist
+    const randomEmail = `test+new${Date.now()}@summerhouse.com`
+
+    await page.getByLabel(/full name/i).fill('New Test User')
+    await page.getByLabel(/email/i).fill(randomEmail)
+    await page.getByLabel(/phone/i).fill('+34 612 345 678')
+
+    // Listen for console to debug the flow
+    page.on('console', (msg) => {
+      if (msg.text().includes('[auth]')) {
+        console.log('Browser log:', msg.text())
+      }
+    })
+
+    await page.getByRole('button', { name: /verify email/i }).click()
+
+    // Should transition to OTP view (via signUp flow, not "challenge not available" error)
+    // This tests that CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION with empty challenges
+    // correctly triggers the signUp fallback
+    await expect(page.getByLabel(/verification code|code/i)).toBeVisible({ timeout: 15000 })
+
+    // Should show the email address
+    await expect(page.getByText(randomEmail)).toBeVisible()
   })
 })
