@@ -158,6 +158,7 @@ export function AuthStep({
   }, [form, initiateAuth])
 
   // Handle OTP code change - auto-submit when 6 digits entered
+  // (Cognito EMAIL_OTP sends 6-digit verification codes)
   const handleOtpChange = useCallback(
     (value: string) => {
       setOtpCode(value)
@@ -327,7 +328,7 @@ export function AuthStep({
               <p className="font-medium">{pendingEmail}</p>
             </div>
 
-            {/* OTP Input - 6 slots */}
+            {/* OTP Input - 6 slots (Cognito EMAIL_OTP sends 6-digit codes) */}
             <div className="space-y-2">
               <label htmlFor="otp-input" className="text-sm font-medium">
                 Verification code

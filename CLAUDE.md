@@ -145,3 +145,10 @@ NEXT_PUBLIC_AWS_REGION, NEXT_PUBLIC_COGNITO_IDENTITY_POOL_ID, NEXT_PUBLIC_AGENTC
 - Constitution: `.specify/memory/constitution.md`
 - Active spec: `specs/{current-feature}/`
 - Data model: `specs/001-agent-booking-platform/data-model.md`
+
+## Active Technologies
+- Python 3.13+ (Lambda), TypeScript strict (E2E tests) + AWS Lambda, Cognito Custom Message Trigger, DynamoDB, Playwrigh (019-e2e-email-otp)
+- DynamoDB (`verification_codes` table - already exists with TTL enabled) (019-e2e-email-otp)
+
+## Recent Changes
+- 019-e2e-email-otp: Added Python 3.13+ (Lambda), TypeScript strict (E2E tests) + AWS Lambda, Cognito Custom Message Trigger, DynamoDB, Playwrigh

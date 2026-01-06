@@ -114,6 +114,23 @@ variable "enable_cognito_password_auth" {
   default     = false
 }
 
+variable "enable_otp_interceptor" {
+  description = <<-EOT
+    Enable OTP Interceptor Lambda for E2E test automation.
+    When enabled, deploys a Lambda that intercepts Cognito EMAIL_OTP codes
+    for test email patterns (test+*@summerhouse.com) and stores them in
+    DynamoDB for E2E test retrieval.
+
+    This allows E2E tests to programmatically verify OTP codes without
+    needing access to email inboxes.
+
+    Security: Only intercepts codes in dev environment for test email patterns.
+    Should only be enabled in dev environments.
+  EOT
+  type        = bool
+  default     = false
+}
+
 # -----------------------------------------------------------------------------
 # SES Email Configuration for Cognito
 # -----------------------------------------------------------------------------

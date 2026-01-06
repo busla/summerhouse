@@ -138,6 +138,54 @@ variable "frontend_callback_urls" {
 }
 
 # -----------------------------------------------------------------------------
+# Lambda Triggers
+# -----------------------------------------------------------------------------
+
+variable "custom_message_lambda_arn" {
+  description = <<-EOT
+    DEPRECATED: Use custom_email_sender_lambda_arn instead.
+    Custom Message trigger only receives placeholder codes, not actual OTP values.
+
+    ARN of a Lambda function to invoke for the Custom Message trigger.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "custom_email_sender_lambda_arn" {
+  description = <<-EOT
+    ARN of a Lambda function to invoke for the Custom Email Sender trigger.
+
+    When set, Cognito invokes this Lambda for ALL email delivery, passing the
+    encrypted OTP code. The Lambda decrypts the code and handles email delivery.
+
+    Use case: OTP Interceptor Lambda for E2E test automation - stores decrypted
+    OTP codes in DynamoDB so E2E tests can retrieve them programmatically.
+
+    IMPORTANT: Custom Email Sender takes over ALL email delivery from Cognito.
+    The Lambda must send emails itself (via SES or other provider).
+
+    Security: The Lambda should only store codes for test email patterns
+    (e.g., test+*@domain.com) and only in dev environment.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "custom_email_sender_kms_key_arn" {
+  description = <<-EOT
+    ARN of the KMS key used to encrypt OTP codes for Custom Email Sender.
+
+    Cognito encrypts the OTP code with this key before passing to the Lambda.
+    The Lambda must have kms:Decrypt permission on this key.
+
+    Required when custom_email_sender_lambda_arn is set.
+  EOT
+  type        = string
+  default     = null
+}
+
+# -----------------------------------------------------------------------------
 # Test Automation Support
 # -----------------------------------------------------------------------------
 

@@ -1,0 +1,7 @@
+# OTP Interceptor Lambda dependencies
+# boto3 is provided by Lambda runtime, but listed for local testing
+boto3>=1.35.0
+
+# AWS Encryption SDK for decrypting OTP codes from Cognito Custom Email Sender
+# The code is encrypted with a KMS key by Cognito before being passed to Lambda
+aws-encryption-sdk>=3.3.0
